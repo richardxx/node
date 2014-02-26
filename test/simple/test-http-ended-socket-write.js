@@ -25,6 +25,7 @@ var assert = require('assert');
 // Verify that ECONNRESET is raised when writing to a http request
 // where the server has ended the socket.
 
+
 var http = require('http');
 var net = require('net');
 var server = http.createServer(function(req, res) {
@@ -56,7 +57,7 @@ server.listen(common.PORT, function() {
   });
 
   function write() {
-    if (++writes === 64) {
+    if (++writes === 640) {
       clearTimeout(timer);
       req.end();
       test();
