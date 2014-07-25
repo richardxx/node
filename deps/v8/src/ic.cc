@@ -2314,6 +2314,8 @@ RUNTIME_FUNCTION(MaybeObject*, SharedStoreIC_ExtendStorage) {
   object->set_properties(new_storage);
   object->set_map(transition);
 
+  //LOG_INTERNAL_EVENT(isolate, EmitObjectEvent(Logger::ExpandArray, object, old_storage->length()));
+
   // Return the stored value.
   return value;
 }

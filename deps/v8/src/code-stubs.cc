@@ -716,7 +716,9 @@ void ElementsTransitionAndStoreStub::Generate(MacroAssembler* masm) {
   Label fail;
   AllocationSiteMode mode = AllocationSiteInfo::GetMode(from_, to_);
   ASSERT(!IsFastHoleyElementsKind(from_) || IsFastHoleyElementsKind(to_));
-  if (!FLAG_trace_elements_transitions) {
+  if (!FLAG_trace_elements_transitions
+	&& !FLAG_trace_internals) {
+	// For prototype version, we simply disable element transisiton stub
     if (IsFastSmiOrObjectElementsKind(to_)) {
       if (IsFastSmiOrObjectElementsKind(from_)) {
         ElementsTransitionGenerator::

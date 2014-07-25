@@ -347,8 +347,6 @@
         '../../src/hydrogen-gvn.h',
         '../../src/hydrogen-infer-representation.cc',
         '../../src/hydrogen-infer-representation.h',
-        '../../src/hydrogen-range-analysis.cc',
-        '../../src/hydrogen-range-analysis.h',
         '../../src/hydrogen-uint32-analysis.cc',
         '../../src/hydrogen-uint32-analysis.h',
         '../../src/hydrogen-osr.cc',

@@ -38,7 +38,6 @@
 #include "hydrogen-infer-representation.h"
 #include "hydrogen-gvn.h"
 #include "hydrogen-osr.h"
-#include "hydrogen-range-analysis.h"
 #include "hydrogen-uint32-analysis.h"
 #include "lithium-allocator.h"
 #include "parser.h"
@@ -1151,6 +1150,19 @@ HValue* HGraphBuilder::BuildCheckForCapacityGrow(HValue* object,
                                                    new_capacity);
 
   environment()->Push(new_elements);
+
+  // We log array growing action
+  // if ( FLAG_trace_internals ) {
+  //   // Push the runtime call parameters
+  //   Add<HPushArgument>(Add<HConstant>(Logger::ElemTransition));
+  //   Add<HPushArgument>(object);
+  //   Add<HPushArgument>(graph()->GetConstantNull());
+
+  //   Add<HCallRuntime>(context,
+  // 		      isolate()->factory()->empty_string(),
+  // 		      Runtime::FunctionForId(Runtime::kLogObjectManipulate),
+  // 		      3);
+  // }
   capacity_checker.Else();
 
   environment()->Push(elements);
@@ -1196,6 +1208,17 @@ HValue* HGraphBuilder::BuildCopyElementsOnWrite(HValue* object,
                                                    kind, length, capacity);
 
   environment()->Push(new_elements);
+
+  /*if ( FLAG_trace_internals ) {
+  	Add<HPushArgument>(Add<HConstant>(Logger::CowCopy));
+  	Add<HPushArgument>(object);
+  	Add<HPushArgument>(graph()->GetConstantNull());
+
+    Add<HCallRuntime>(environment()->LookupContext(),
+  	  isolate()->factory()->empty_string(),
+      Runtime::FunctionForId(Runtime::kLogObjectManipulate),
+      3);
+  }*/
 
   cow_checker.Else();
 
@@ -2580,6 +2603,169 @@ void HGraph::InferTypes(ZoneList<HValue*>* worklist) {
 }
 
 
+class HRangeAnalysis BASE_EMBEDDED {
+ public:
+  explicit HRangeAnalysis(HGraph* graph) :
+      graph_(graph), zone_(graph->zone()), changed_ranges_(16, zone_) { }
+
+  void Analyze();
+
+ private:
+  void TraceRange(const char* msg, ...);
+  void Analyze(HBasicBlock* block);
+  void InferControlFlowRange(HCompareIDAndBranch* test, HBasicBlock* dest);
+  void UpdateControlFlowRange(Token::Value op, HValue* value, HValue* other);
+  void InferRange(HValue* value);
+  void RollBackTo(int index);
+  void AddRange(HValue* value, Range* range);
+
+  HGraph* graph_;
+  Zone* zone_;
+  ZoneList<HValue*> changed_ranges_;
+};
+
+
+void HRangeAnalysis::TraceRange(const char* msg, ...) {
+  if (FLAG_trace_range) {
+    va_list arguments;
+    va_start(arguments, msg);
+    OS::VPrint(msg, arguments);
+    va_end(arguments);
+  }
+}
+
+
+void HRangeAnalysis::Analyze() {
+  HPhase phase("H_Range analysis", graph_);
+  Analyze(graph_->entry_block());
+}
+
+
+void HRangeAnalysis::Analyze(HBasicBlock* block) {
+  TraceRange("Analyzing block B%d\n", block->block_id());
+
+  int last_changed_range = changed_ranges_.length() - 1;
+
+  // Infer range based on control flow.
+  if (block->predecessors()->length() == 1) {
+    HBasicBlock* pred = block->predecessors()->first();
+    if (pred->end()->IsCompareIDAndBranch()) {
+      InferControlFlowRange(HCompareIDAndBranch::cast(pred->end()), block);
+    }
+  }
+
+  // Process phi instructions.
+  for (int i = 0; i < block->phis()->length(); ++i) {
+    HPhi* phi = block->phis()->at(i);
+    InferRange(phi);
+  }
+
+  // Go through all instructions of the current block.
+  for (HInstructionIterator it(block); !it.Done(); it.Advance()) {
+    InferRange(it.Current());
+  }
+
+  // Continue analysis in all dominated blocks.
+  for (int i = 0; i < block->dominated_blocks()->length(); ++i) {
+    Analyze(block->dominated_blocks()->at(i));
+  }
+
+  RollBackTo(last_changed_range);
+}
+
+
+void HRangeAnalysis::InferControlFlowRange(HCompareIDAndBranch* test,
+                                           HBasicBlock* dest) {
+  ASSERT((test->FirstSuccessor() == dest) == (test->SecondSuccessor() != dest));
+  if (test->representation().IsSmiOrInteger32()) {
+    Token::Value op = test->token();
+    if (test->SecondSuccessor() == dest) {
+      op = Token::NegateCompareOp(op);
+    }
+    Token::Value inverted_op = Token::ReverseCompareOp(op);
+    UpdateControlFlowRange(op, test->left(), test->right());
+    UpdateControlFlowRange(inverted_op, test->right(), test->left());
+  }
+}
+
+
+// We know that value [op] other. Use this information to update the range on
+// value.
+void HRangeAnalysis::UpdateControlFlowRange(Token::Value op,
+                                            HValue* value,
+                                            HValue* other) {
+  Range temp_range;
+  Range* range = other->range() != NULL ? other->range() : &temp_range;
+  Range* new_range = NULL;
+
+  TraceRange("Control flow range infer %d %s %d\n",
+             value->id(),
+             Token::Name(op),
+             other->id());
+
+  if (op == Token::EQ || op == Token::EQ_STRICT) {
+    // The same range has to apply for value.
+    new_range = range->Copy(zone_);
+  } else if (op == Token::LT || op == Token::LTE) {
+    new_range = range->CopyClearLower(zone_);
+    if (op == Token::LT) {
+      new_range->AddConstant(-1);
+    }
+  } else if (op == Token::GT || op == Token::GTE) {
+    new_range = range->CopyClearUpper(zone_);
+    if (op == Token::GT) {
+      new_range->AddConstant(1);
+    }
+  }
+
+  if (new_range != NULL && !new_range->IsMostGeneric()) {
+    AddRange(value, new_range);
+  }
+}
+
+
+void HRangeAnalysis::InferRange(HValue* value) {
+  ASSERT(!value->HasRange());
+  if (!value->representation().IsNone()) {
+    value->ComputeInitialRange(zone_);
+    Range* range = value->range();
+    TraceRange("Initial inferred range of %d (%s) set to [%d,%d]\n",
+               value->id(),
+               value->Mnemonic(),
+               range->lower(),
+               range->upper());
+  }
+}
+
+
+void HRangeAnalysis::RollBackTo(int index) {
+  for (int i = index + 1; i < changed_ranges_.length(); ++i) {
+    changed_ranges_[i]->RemoveLastAddedRange();
+  }
+  changed_ranges_.Rewind(index + 1);
+}
+
+
+void HRangeAnalysis::AddRange(HValue* value, Range* range) {
+  Range* original_range = value->range();
+  value->AddNewRange(range, zone_);
+  changed_ranges_.Add(value, zone_);
+  Range* new_range = value->range();
+  TraceRange("Updated range of %d set to [%d,%d]\n",
+             value->id(),
+             new_range->lower(),
+             new_range->upper());
+  if (original_range != NULL) {
+    TraceRange("Original range was [%d,%d]\n",
+               original_range->lower(),
+               original_range->upper());
+  }
+  TraceRange("New information was [%d,%d]\n",
+             range->lower(),
+             range->upper());
+}
+
+
 class HStackCheckEliminator BASE_EMBEDDED {
  public:
   explicit HStackCheckEliminator(HGraph* graph) : graph_(graph) { }
@@ -3444,8 +3630,10 @@ bool HGraph::Optimize(SmartArrayPointer<char>* bailout_reason) {
 
   if (FLAG_use_gvn) Run<HGlobalValueNumberingPhase>();
 
-  if (FLAG_use_range) Run<HRangeAnalysisPhase>();
-
+  if (FLAG_use_range) {
+    HRangeAnalysis range_analysis(this);
+    range_analysis.Analyze();
+  }
   ComputeMinusZeroChecks();
 
   // Eliminate redundant stack checks on backwards branches.
@@ -5193,7 +5381,7 @@ void HOptimizedGraphBuilder::VisitObjectLiteral(ObjectLiteral* expr) {
   int max_properties = kMaxFastLiteralProperties;
   Handle<Object> original_boilerplate(closure->literals()->get(
       expr->literal_index()), isolate());
-  if (original_boilerplate->IsJSObject() &&
+  if (!FLAG_trace_internals && original_boilerplate->IsJSObject() &&
       IsFastLiteral(Handle<JSObject>::cast(original_boilerplate),
                     kMaxFastLiteralDepth,
                     &max_properties,
@@ -5238,6 +5426,19 @@ void HOptimizedGraphBuilder::VisitObjectLiteral(ObjectLiteral* expr) {
   // of the property values and is the value of the entire expression.
   Push(literal);
 
+  // We log the array created at this literal
+  int literal_index = expr->literal_index();
+  if (FLAG_trace_internals) {
+	Add<HPushArgument>(literal);
+	Add<HPushArgument>(Add<HConstant>(closure));
+	Add<HPushArgument>(Add<HConstant>(literal_index));
+
+	Add<HCallRuntime>(context,
+			  isolate()->factory()->empty_string(),
+			  Runtime::FunctionForId(Runtime::kLogObjectCreate),
+			  3);
+  }
+  
   expr->CalculateEmitStore(zone());
 
   for (int i = 0; i < expr->properties()->length(); i++) {
@@ -5290,7 +5491,7 @@ void HOptimizedGraphBuilder::VisitObjectLiteral(ObjectLiteral* expr) {
       default: UNREACHABLE();
     }
   }
-
+  
   if (expr->has_function()) {
     // Return the result of the transformation to fast properties
     // instead of the original since this operation changes the map
@@ -5300,7 +5501,7 @@ void HOptimizedGraphBuilder::VisitObjectLiteral(ObjectLiteral* expr) {
     HToFastProperties* result = Add<HToFastProperties>(Pop());
     return ast_context()->ReturnValue(result);
   } else {
-    return ast_context()->ReturnValue(Pop());
+	return ast_context()->ReturnValue(Pop());
   }
 }
 
@@ -5348,7 +5549,7 @@ void HOptimizedGraphBuilder::VisitArrayLiteral(ArrayLiteral* expr) {
   int data_size = 0;
   int pointer_size = 0;
   int max_properties = kMaxFastLiteralProperties;
-  if (IsFastLiteral(original_boilerplate_object,
+  if (!FLAG_trace_internals && IsFastLiteral(original_boilerplate_object,
                     kMaxFastLiteralDepth,
                     &max_properties,
                     &data_size,
@@ -5394,6 +5595,22 @@ void HOptimizedGraphBuilder::VisitArrayLiteral(ArrayLiteral* expr) {
   // The literal index is on the stack, too.
   Push(Add<HConstant>(expr->literal_index()));
 
+  if ( FLAG_trace_internals ) {
+    // We log the array created at this literal
+    int literal_index = expr->literal_index();
+    Handle<JSFunction> closure = function_state()->compilation_info()->closure();
+    
+    // Push the runtime call parameters
+    Add<HPushArgument>(literal);
+    Add<HPushArgument>(Add<HConstant>(closure));
+    Add<HPushArgument>(Add<HConstant>(literal_index));
+    
+    Add<HCallRuntime>(context,
+                      isolate()->factory()->empty_string(),
+                      Runtime::FunctionForId(Runtime::kLogObjectCreate),
+                      3);
+  }
+
   HInstruction* elements = NULL;
 
   for (int i = 0; i < length; i++) {
@@ -5431,7 +5648,8 @@ void HOptimizedGraphBuilder::VisitArrayLiteral(ArrayLiteral* expr) {
   }
 
   Drop(1);  // array literal index
-  return ast_context()->ReturnValue(Pop());
+  HValue* ret_val = Pop();
+  return ast_context()->ReturnValue(ret_val);
 }
 
 
@@ -8132,7 +8350,7 @@ void HOptimizedGraphBuilder::VisitCallNew(CallNew* expr) {
     ASSERT(environment()->ExpressionStackAt(receiver_index) == function);
     environment()->SetExpressionStackAt(receiver_index, receiver);
 
-    if (TryInlineConstruct(expr, receiver)) return;
+    //if (TryInlineConstruct(expr, receiver)) return;
 
     // TODO(mstarzinger): For now we remove the previous HAllocateObject and
     // add HPushArgument for the arguments in case inlining failed.  What we

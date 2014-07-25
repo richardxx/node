@@ -337,6 +337,11 @@ static void Generate_JSConstructStubHelper(MacroAssembler* masm,
 
     // Allocate the new receiver object using the runtime call.
     __ bind(&rt_call);
+	//if ( FLAG_trace_internals ) {
+	  /*__ mov(eax, Operand(ebp, JavaScriptFrameConstants::kFunctionOffset));
+	  __ mov(ebx, Immediate((Address)Isolate::Current()->get_function_before_runtime_var()));
+	  __ mov(Operand(ebx, 0), eax);*/
+	//}
     // Must restore edi (constructor) before calling runtime.
     __ mov(edi, Operand(esp, 0));
     // edi: function (constructor)

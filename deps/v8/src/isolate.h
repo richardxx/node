@@ -1296,6 +1296,10 @@ class Isolate {
   DateCache* date_cache_;
   unibrow::Mapping<unibrow::Ecma262Canonicalize> interp_canonicalize_mapping_;
   CodeStubInterfaceDescriptor* code_stub_interface_descriptors_;
+  
+  // Xiao's priviate extensions
+  HeapObject** opt_code_fail_pair_;
+  HeapObject** callnew_pair_;
 
   // The garbage collector should be a little more aggressive when it knows
   // that a context was recently exited.
@@ -1371,8 +1375,21 @@ class Isolate {
   friend class v8::Isolate;
   friend class v8::Locker;
   friend class v8::Unlocker;
+  friend class LCodeGen;
+  friend class FullCodeGenerator;
+  friend class Deoptimizer;
 
   DISALLOW_COPY_AND_ASSIGN(Isolate);
+
+public:
+	// For Xiao's public functions
+  HeapObject** get_opt_code_fail_pair() {
+	return opt_code_fail_pair_;
+  }
+
+  HeapObject** get_callnew_pair() {
+	return callnew_pair_;
+  }
 };
 
 

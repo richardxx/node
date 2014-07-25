@@ -48,6 +48,7 @@
 #include "factory.h"
 #include "incremental-marking.h"
 #include "transitions-inl.h"
+#include "log.h"
 
 namespace v8 {
 namespace internal {
@@ -89,6 +90,9 @@ PropertyDetails PropertyDetails::AsDeleted() {
   int holder::name() { return READ_INT_FIELD(this, offset); }           \
   void holder::set_##name(int value) { WRITE_INT_FIELD(this, offset, value); }
 
+#define LONG_ACCESSORS(holder, name, offset)                             \
+  long holder::name() { return READ_LONG_FIELD(this, offset); }           \
+  void holder::set_##name(long value) { WRITE_LONG_FIELD(this, offset, value); }
 
 #define ACCESSORS(holder, name, type, offset)                           \
   type* holder::name() { return type::cast(READ_FIELD(this, offset)); } \
@@ -1010,6 +1014,12 @@ MaybeObject* Object::GetProperty(Name* key, PropertyAttributes* attributes) {
 #define WRITE_INT_FIELD(p, offset, value) \
   (*reinterpret_cast<int*>(FIELD_ADDR(p, offset)) = value)
 
+#define READ_LONG_FIELD(p, offset) \
+  (*reinterpret_cast<long*>(FIELD_ADDR(p, offset)))
+
+#define WRITE_LONG_FIELD(p, offset, value) \
+  (*reinterpret_cast<long*>(FIELD_ADDR(p, offset)) = value)
+
 #define READ_INTPTR_FIELD(p, offset) \
   (*reinterpret_cast<intptr_t*>(FIELD_ADDR(p, offset)))
 
@@ -1040,6 +1050,11 @@ MaybeObject* Object::GetProperty(Name* key, PropertyAttributes* attributes) {
 #define WRITE_BYTE_FIELD(p, offset, value) \
   (*reinterpret_cast<byte*>(FIELD_ADDR(p, offset)) = value)
 
+#define READ_ANYTYPE_FIELD(type, p, offset) \
+  (*reinterpret_cast<type*>(FIELD_ADDR(p, offset)))
+
+#define WRITE_ANYTYPE_FIELD(type, p, offset, value) \
+  (*reinterpret_cast<type*>(FIELD_ADDR(p, offset)) = value)
 
 Object** HeapObject::RawField(HeapObject* obj, int byte_offset) {
   return &READ_FIELD(obj, byte_offset);
@@ -1202,7 +1217,6 @@ void HeapObject::set_map(Map* value) {
     value->GetHeap()->incremental_marking()->RecordWrite(this, NULL, value);
   }
 }
-
 
 // Unsafe accessor omitting write barrier.
 void HeapObject::set_map_no_write_barrier(Map* value) {
@@ -3642,11 +3656,11 @@ bool Map::CanBeDeprecated() {
 }
 
 
-void Map::NotifyLeafMapLayoutChange() {
-  dependent_code()->DeoptimizeDependentCodeGroup(
-      GetIsolate(),
-      DependentCode::kPrototypeCheckGroup);
-}
+//void Map::NotifyLeafMapLayoutChange() {
+//  dependent_code()->DeoptimizeDependentCodeGroup(
+//      GetIsolate(),
+//      DependentCode::kPrototypeCheckGroup);
+//}
 
 
 bool Map::CanOmitPrototypeChecks() {
@@ -4490,7 +4504,6 @@ ACCESSORS(SharedFunctionInfo, debug_info, Object, kDebugInfoOffset)
 ACCESSORS(SharedFunctionInfo, inferred_name, String, kInferredNameOffset)
 SMI_ACCESSORS(SharedFunctionInfo, ast_node_count, kAstNodeCountOffset)
 
-
 SMI_ACCESSORS(FunctionTemplateInfo, length, kLengthOffset)
 BOOL_ACCESSORS(FunctionTemplateInfo, flag, hidden_prototype,
                kHiddenPrototypeBit)
@@ -4520,7 +4533,6 @@ BOOL_ACCESSORS(SharedFunctionInfo,
                compiler_hints,
                has_duplicate_parameters,
                kHasDuplicateParameters)
-
 
 #if V8_HOST_ARCH_32_BIT
 SMI_ACCESSORS(SharedFunctionInfo, length, kLengthOffset)
@@ -4842,7 +4854,7 @@ bool SharedFunctionInfo::has_deoptimization_support() {
 }
 
 
-void SharedFunctionInfo::TryReenableOptimization() {
+void SharedFunctionInfo::TryReenableOptimization(const char* reason) {
   int tries = opt_reenable_tries();
   set_opt_reenable_tries((tries + 1) & OptReenableTriesBits::kMax);
   // We reenable optimization whenever the number of tries is a large
@@ -4853,8 +4865,17 @@ void SharedFunctionInfo::TryReenableOptimization() {
     set_deopt_count(0);
     code()->set_optimizable(true);
   }
-}
 
+  if ( FLAG_trace_internals ) {
+	LOG( GetIsolate(),
+		  EmitFunctionEvent(
+			Logger::ReenableOpt,
+			NULL,
+			NULL,
+			this, reason)
+		  );
+  }
+}
 
 bool JSFunction::IsBuiltin() {
   return context()->global_object()->IsJSBuiltinsObject();
@@ -4914,6 +4935,15 @@ void JSFunction::set_code(Code* value) {
       this,
       HeapObject::RawField(this, kCodeEntryOffset),
       value);
+
+  /*if ( FLAG_trace_internals ) {
+	Isolate* isolate = GetIsolate();
+	LOG( isolate,
+	  EmitFunctionEvent(
+	  Logger::SetCode,
+		this, value, NULL)
+	);
+  }*/
 }
 
 

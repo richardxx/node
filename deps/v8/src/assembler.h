@@ -892,6 +892,9 @@ class ExternalReference BASE_EMBEDDED {
   }
 
   void* address_;
+
+  friend class LCodeGen;
+  friend class FullCodeGenerator;
 };
 
 

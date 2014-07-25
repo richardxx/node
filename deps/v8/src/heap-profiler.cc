@@ -124,6 +124,11 @@ HeapSnapshot* HeapProfiler::GetSnapshot(int index) {
 }
 
 
+HeapSnapshot* HeapProfiler::FindSnapshot(unsigned uid) {
+  return snapshots_->GetSnapshot(uid);
+}
+
+
 SnapshotObjectId HeapProfiler::GetSnapshotObjectId(Handle<Object> obj) {
   if (!obj->IsHeapObject())
     return v8::HeapProfiler::kUnknownObjectId;

@@ -841,6 +841,13 @@ enum CompareResult {
   inline void set_##name(type* value,                                   \
                          WriteBarrierMode mode = UPDATE_WRITE_BARRIER); \
 
+#define DECL_INT_ACCESSORS(name)                                        \
+  inline int name();													\
+  inline void set_##name(int value);									\
+
+#define DECL_LONG_ACCESSORS(name)                                        \
+  inline long name();													\
+  inline void set_##name(long value);									\
 
 class AccessorPair;
 class DictionaryElementsAccessor;
@@ -6251,7 +6258,7 @@ class SharedFunctionInfo: public HeapObject {
   inline void set_opt_reenable_tries(int value);
   inline int opt_reenable_tries();
 
-  inline void TryReenableOptimization();
+  inline void TryReenableOptimization(const char* reason = NULL);
 
   // Stores deopt_count, opt_reenable_tries and ic_age as bit-fields.
   inline void set_counters(int value);
@@ -6306,10 +6313,11 @@ class SharedFunctionInfo: public HeapObject {
   // into a PSEUDO_SMI_ACCESSORS pair (on x64), if one becomes available.
   static const int kAstNodeCountOffset =
       kInitialMapOffset + kPointerSize;
+
 #if V8_HOST_ARCH_32_BIT
   // Smi fields.
   static const int kLengthOffset =
-      kAstNodeCountOffset + kPointerSize;
+	kAstNodeCountOffset + kPointerSize;
   static const int kFormalParameterCountOffset = kLengthOffset + kPointerSize;
   static const int kExpectedNofPropertiesOffset =
       kFormalParameterCountOffset + kPointerSize;

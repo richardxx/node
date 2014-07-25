@@ -46,8 +46,9 @@ class Log {
 
   static bool InitLogAtStart() {
     return FLAG_log || FLAG_log_runtime || FLAG_log_api
-        || FLAG_log_code || FLAG_log_gc || FLAG_log_handles || FLAG_log_suspect
-        || FLAG_log_regexp || FLAG_ll_prof || FLAG_log_internal_timer_events;
+      || FLAG_log_code || FLAG_log_gc || FLAG_log_handles || FLAG_log_suspect
+      || FLAG_log_regexp || FLAG_ll_prof || FLAG_log_internal_timer_events
+      || FLAG_trace_internals || FLAG_trace_open;
   }
 
   // Frees all resources acquired in Initialize and Open... functions.
@@ -116,6 +117,7 @@ class Log {
 
 // Utility class for formatting log messages. It fills the message into the
 // static buffer in Log.
+// (richardxx) The builder can only be used as a local variable, because it uses scopedLock
 class LogMessageBuilder BASE_EMBEDDED {
  public:
   // Create a message builder starting from position 0. This acquires the mutex

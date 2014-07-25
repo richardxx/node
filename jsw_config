@@ -1,0 +1,3 @@
+#!/bin/sh
+
+GYP_DEFINES="v8_enable_disassembler=1 v8_object_print=1" ./configure --debug --without-snapshot --gdb --dest-cpu=ia32

@@ -96,7 +96,7 @@ void OptimizingCompilerThread::CompileNext() {
   ScopedLock mark_and_queue(install_mutex_);
   { Heap::RelocationLock relocation_lock(isolate_->heap());
     AllowHandleDereference ahd;
-    optimizing_compiler->info()->closure()->MarkForInstallingRecompiledCode();
+	optimizing_compiler->info()->closure()->MarkForInstallingRecompiledCode();
   }
   output_queue_.Enqueue(optimizing_compiler);
 }
@@ -144,7 +144,14 @@ void OptimizingCompilerThread::InstallOptimizedFunctions() {
       ScopedLock marked_and_queued(install_mutex_);
       if (!output_queue_.Dequeue(&compiler)) return;
     }
-    Compiler::InstallOptimizedCode(compiler);
+	
+	/*
+	  There is a very deep trick that InstallOptimizedCode releases memory for compilationInfo and OptimizingCompiler.
+	  The is because OptimizingCompiler is allocated in the zone of the compilationInfo and the compilationInfo is automatically released.
+	*/
+	//JSFunction* function = *(compiler->info()->closure());
+	// Generate real code and record in info->code()
+	Compiler::InstallOptimizedCode(compiler);
   }
 }
 

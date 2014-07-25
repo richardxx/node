@@ -276,7 +276,12 @@ class LCodeGen BASE_EMBEDDED {
   void DeoptimizeIf(Condition cc,
                     LEnvironment* environment,
                     Deoptimizer::BailoutType bailout_type);
-  void DeoptimizeIf(Condition cc, LEnvironment* environment);
+
+  // Expected map can be passed in either ways but not both
+  void DeoptimizeIf(Condition cc, LEnvironment* environment, 
+	Register deopt_obj = no_reg, 
+	Handle<Map> expected_map = Handle<Map>::null(), Register reg_expected_map = no_reg );
+
   void SoftDeoptimize(LEnvironment* environment);
 
   void AddToTranslation(Translation* translation,

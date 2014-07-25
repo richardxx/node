@@ -2002,6 +2002,9 @@ class ScavengingVisitor : public StaticVisitorBase {
 
     // Set the forwarding address.
     source->set_map_word(MapWord::FromForwardingAddress(target));
+	
+    // It's dangerous to retrive the map of source object
+    LOG_INTERNAL_EVENT(heap->isolate(), EmitGCMoveEvent(source, target));
 
     if (logging_and_profiling_mode == LOGGING_AND_PROFILING_ENABLED) {
       // Update NewSpace stats if necessary.
@@ -3548,6 +3551,8 @@ MaybeObject* Heap::AllocateSharedFunctionInfo(Object* name) {
   if (!maybe->To<SharedFunctionInfo>(&share)) return maybe;
 
   // Set pointer fields.
+  /*if ( FLAG_trace_internals)
+    PrintF( "Create Function = %s\n", (*String::cast(name)->ToCString()) );*/
   share->set_name(name);
   Code* illegal = isolate_->builtins()->builtin(Builtins::kIllegal);
   share->set_code(illegal);
@@ -4280,6 +4285,17 @@ MaybeObject* Heap::AllocateFunction(Map* function_map,
     if (!maybe_result->ToObject(&result)) return maybe_result;
   }
   InitializeFunction(JSFunction::cast(result), shared, prototype);
+
+  if ( FLAG_trace_internals ) {
+    JSFunction* function = JSFunction::cast(result);
+    LOG(isolate(),
+	EmitObjectEvent(
+			Logger::CreateFunction,
+			function,
+			shared)
+	);
+  }
+  
   return result;
 }
 
@@ -4453,6 +4469,7 @@ MaybeObject* Heap::AllocateJSObjectFromMap(Map* map, PretenureFlag pretenure) {
                             map);
   ASSERT(JSObject::cast(obj)->HasFastElements() ||
          JSObject::cast(obj)->HasExternalArrayElements());
+
   return obj;
 }
 
@@ -4515,6 +4532,18 @@ MaybeObject* Heap::AllocateJSObject(JSFunction* constructor,
   Object* non_failure;
   ASSERT(!result->ToObject(&non_failure) || !non_failure->IsGlobalObject());
 #endif
+  
+  if ( FLAG_trace_internals ) {
+    Object* obj;
+    if ( result->ToObject(&obj) ) {
+      LOG(isolate(),
+	  EmitObjectEvent(
+			  Logger::CreateNewObject,
+			  JSObject::cast(obj), constructor)
+	  );
+    }
+  }
+
   return result;
 }
 
@@ -4558,6 +4587,18 @@ MaybeObject* Heap::AllocateJSObjectWithAllocationSite(JSFunction* constructor,
   Object* non_failure;
   ASSERT(!result->ToObject(&non_failure) || !non_failure->IsGlobalObject());
 #endif
+
+  if ( FLAG_trace_internals ) {
+    Object* obj;
+    if ( result->ToObject(&obj) ) {
+      LOG(isolate(),
+	  EmitObjectEvent(
+			  Logger::CreateNewObject,
+			  JSObject::cast(obj), constructor)
+	  );
+    }
+  }
+
   return result;
 }
 
@@ -4891,6 +4932,10 @@ MaybeObject* Heap::CopyJSObject(JSObject* source) {
     }
     JSObject::cast(clone)->set_properties(FixedArray::cast(prop), wb_mode);
   }
+
+  /*LOG_INTERNAL_EVENT(isolate_, 
+	EmitObjectEvent(Logger::CopyObject, JSObject::cast(clone), source));*/
+
   // Return the new clone.
   return clone;
 }
@@ -5378,7 +5423,21 @@ MaybeObject* Heap::AllocateJSArray(
   Map* map = array_function->initial_map();
   Map* transition_map = isolate()->get_initial_js_array_map(elements_kind);
   if (transition_map != NULL) map = transition_map;
-  return AllocateJSObjectFromMap(map, pretenure);
+
+  MaybeObject* array = AllocateJSObjectFromMap(map, pretenure);
+  
+  if ( FLAG_trace_internals ) {
+    Object* obj;
+    if ( array->To(&obj) ) {
+      LOG(isolate(),
+	  EmitObjectEvent(
+			  Logger::CreateNewObject,
+			  JSObject::cast(obj), array_function)
+	  );
+    }
+  }
+  
+  return array;
 }
 
 

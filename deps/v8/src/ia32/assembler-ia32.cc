@@ -505,6 +505,20 @@ void Assembler::popfd() {
 }
 
 
+void Assembler::push_all() {
+  for ( int i = 0; i < Register::kNumRegisters; ++i ) {
+	push(Register::from_code(i));
+  }
+}
+
+
+void Assembler::pop_all() {
+  for ( int i = Register::kNumRegisters - 1; i > -1; --i ) {
+	pop(Register::from_code(i));
+  }
+}
+
+
 void Assembler::push(const Immediate& x) {
   EnsureSpace ensure_space(this);
   if (x.is_int8()) {

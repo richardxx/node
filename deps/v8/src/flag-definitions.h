@@ -287,7 +287,7 @@ DEFINE_bool(opt_safe_uint32_operations, true,
             "allow uint32 values on optimize frames if they are used only in "
             "safe operations")
 
-DEFINE_bool(parallel_recompilation, true,
+DEFINE_bool(parallel_recompilation, false,
             "optimizing hot functions asynchronously on a separate thread")
 DEFINE_bool(trace_parallel_recompilation, false, "track parallel recompilation")
 DEFINE_int(parallel_recompilation_queue_length, 8,
@@ -377,7 +377,7 @@ DEFINE_bool(builtins_in_stack_traces, false,
 DEFINE_bool(disable_native_files, false, "disable builtin natives files")
 
 // builtins-ia32.cc
-DEFINE_bool(inline_new, true, "use fast inline allocation")
+DEFINE_bool(inline_new, false, "use fast inline allocation")
 
 // checks.cc
 DEFINE_bool(stack_trace_on_abort, true,
@@ -741,6 +741,10 @@ DEFINE_bool(log_timer_events, false,
             "Time events including external callbacks.")
 DEFINE_implication(log_timer_events, log_internal_timer_events)
 DEFINE_implication(log_internal_timer_events, prof)
+
+// Xiao's extension
+DEFINE_bool(trace_internals, false, "Trace internal states evolutioin graphs for performance debugging")
+DEFINE_bool(trace_open, false, "Just open v8 tracing facility")
 
 //
 // Disassembler only flags

@@ -1,0 +1,10 @@
+#!/bin/sh
+
+mode="release"
+
+if [ "$#" -ne "0" ];
+then
+    mode="$1"
+fi
+
+make -j8 ia32."$mode" disassembler=on #snapshot=off 

@@ -195,6 +195,28 @@ void Deoptimizer::DeoptimizeFunctionWithPreparedFunctionList(
   node->set_next(data->deoptimizing_code_list_);
   data->deoptimizing_code_list_ = node;
 
+  // Log the action before the code submitted for GC
+  if ( FLAG_trace_internals ) {
+	// Generate deopt events for all functions on the code list
+	SharedFunctionInfo* shared = function->shared();
+	Code* new_code = shared->code();
+	Object* undefined = function->GetHeap()->undefined_value();
+	Object* current = function;
+
+	while (current != undefined) {
+	  JSFunction* func = JSFunction::cast(current);
+	  current = func->next_function_link();
+	  LOG(isolate,
+		EmitFunctionEvent(
+		  Logger::ForceDeopt,
+		  func,
+		  new_code,
+		  shared, code
+		)
+	  );
+	}
+  }
+
   // We might be in the middle of incremental marking with compaction.
   // Tell collector to treat this code object in a special way and
   // ignore all slots that might have been recorded on it.
@@ -479,6 +501,16 @@ void Deoptimizer::DoComputeOsrOutputFrame() {
     PrintFunctionName();
     PrintF(" => pc=0x%0x]\n", output_[0]->GetPc());
   }
+
+  /*if ( FLAG_trace_internals ) {
+	LOG(function_->GetIsolate(),
+		EmitFunctionEvent(
+		Logger::GenOsrCode,
+		function_,
+		compiled_code_,
+		function_->shared(), NULL)
+	  );
+  }*/
 }
 
 

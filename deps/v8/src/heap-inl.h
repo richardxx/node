@@ -642,6 +642,14 @@ Isolate* Heap::isolate() {
                         return Handle<TYPE>())                                \
 
 
+// Added by richardxx, for the purpose of logging the returned value
+#define CALL_HEAP_FUNCTION_TRACE(ISOLATE, FUNCTION_CALL, TYPE, RET_HOLDER) \
+  CALL_AND_RETRY_OR_DIE(ISOLATE,					\
+                        FUNCTION_CALL,					\
+                        RET_HOLDER = Handle<TYPE>(TYPE::cast(__object__), ISOLATE), \
+                        return Handle<TYPE>())				\
+    
+
 #define CALL_HEAP_FUNCTION_VOID(ISOLATE, FUNCTION_CALL)  \
   CALL_AND_RETRY_OR_DIE(ISOLATE, FUNCTION_CALL, return, return)
 

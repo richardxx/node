@@ -708,6 +708,7 @@ int Deoptimizer::GetDeoptimizedCodeCount(Isolate* isolate) {
 // without having a real stack frame in place.
 void Deoptimizer::DoComputeOutputFrames() {
   if (bailout_type_ == OSR) {
+	// This is not deoptimization, but optimization
     DoComputeOsrOutputFrame();
     return;
   }
@@ -817,6 +818,34 @@ void Deoptimizer::DoComputeOutputFrames() {
            has_alignment_padding_ ? "with padding" : "no padding",
            ms);
   }
+
+  // We log deoptimization events before going on
+  if ( FLAG_trace_internals &&
+       function_->IsJSFunction() ) {
+    // function_ may be a SMI, which indicates a builtin function
+    SharedFunctionInfo* shared = function_->shared();
+    Code* code = shared->code();
+    HeapObject** deopt_roots = isolate()->get_opt_code_fail_pair();
+    char buf[48];
+    sprintf(buf, "%s@%d", MessageFor(bailout_type_), bailout_id_);
+    
+    // We supplement the decription of the recorded target
+    /*HeapObject* obj = HeapObject::cast(deopt_roots[0]);
+      Map* exp_map = Map::cast(deopt_roots[1]);*/
+    
+    LOG(isolate(),
+	EmitFunctionEvent(
+			  Logger::RegularDeopt,
+			  function_,
+			  code,
+			  shared, 
+			  compiled_code_, 
+			  deopt_roots[0], deopt_roots[1], 
+			  buf )
+	);
+    
+    //deopt_roots[0] = deopt_roots[1] = NULL;
+  }
 }
 
 
@@ -839,6 +868,21 @@ void Deoptimizer::DoComputeJSFrame(TranslationIterator* iterator,
     function->PrintName();
     PrintF(" => node=%d, height=%d\n", node_id.ToInt(), height_in_bytes);
   }
+
+  /*if ( FLAG_trace_internals &&
+	function != function_) {
+	  SharedFunctionInfo* shared = function->shared();
+	  Code* code = shared->code();
+
+	  LOG(isolate(),
+		  EmitFunctionEvent(
+		  Logger::DeoptAsInline,
+			function,
+			code,
+			shared, 
+			function->code())
+		);
+  }*/
 
   // The 'fixed' part of the frame consists of the incoming parameters and
   // the part described by JavaScriptFrameConstants.
@@ -1948,6 +1992,16 @@ void Deoptimizer::DoTranslateCommand(TranslationIterator* iterator,
         PrintF("\n");
       }
       output_[frame_index]->SetFrameSlot(output_offset, input_value);
+
+	  // We use this value as deoptimization inference hint
+	  /*if ( 0 == frame_index && FLAG_trace_internals ) {
+		Object* value = Memory::Object_at((Address)input_value);
+		if (value != NULL && value->IsHeapObject()) {
+		  HeapObject** deopt_roots = isolate()->get_opt_code_fail_pair();
+		  if ( deopt_roots[0] == NULL )
+			deopt_roots[0] = HeapObject::FromAddress((Address)input_value);
+		}
+	  }*/
       return;
     }
 

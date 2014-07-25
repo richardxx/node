@@ -912,11 +912,53 @@ void LCodeGen::DeoptimizeIf(Condition cc,
 
 
 void LCodeGen::DeoptimizeIf(Condition cc,
-                            LEnvironment* environment) {
-  Deoptimizer::BailoutType bailout_type = info()->IsStub()
+                            LEnvironment* environment,
+							Register deopt_obj,
+							Handle<Map> expected_map,
+							Register reg_expected_map) {
+  bool is_stub = info()->IsStub();
+  Deoptimizer::BailoutType bailout_type = is_stub
       ? Deoptimizer::LAZY
       : Deoptimizer::EAGER;
+
+  bool do_log = (FLAG_trace_internals && deopt_obj.is_valid());
+  Label no_log;
+
+  if ( do_log ) {
+	Isolate* isolate = info()->isolate();
+	  
+	if ( cc != no_condition )
+	  __ j(NegateCondition(cc), &no_log, Label::kNear);
+
+	int i = 0;
+	for ( ; i < Register::kNumRegisters; ++i )
+	  if ( deopt_obj.code() != i )
+		break;
+
+	Register failed_pair_ptr = Register::from_code(i);
+
+	// Save registers
+	__ push(failed_pair_ptr);
+
+	// We write information into global data area
+	__ mov(failed_pair_ptr, Immediate(ExternalReference(isolate->get_opt_code_fail_pair())));
+	__ mov(Operand(failed_pair_ptr, 0), deopt_obj);
+	if ( !expected_map.is_null() )
+	  __ mov(Operand(failed_pair_ptr, kPointerSize), Immediate(expected_map));
+	else if ( !reg_expected_map.is(no_reg) )
+	  __ mov(Operand(failed_pair_ptr, kPointerSize), reg_expected_map);
+	else
+	  __ mov(Operand(failed_pair_ptr, kPointerSize), Immediate(0));
+
+	// Restore registers
+	__ pop(failed_pair_ptr);
+  }
+
   DeoptimizeIf(cc, environment, bailout_type);
+
+  if ( do_log ) {
+	__ bind(&no_log);
+  }
 }
 
 
@@ -2982,7 +3024,7 @@ void LCodeGen::EmitLoadFieldOrConstantFunction(Register result,
       __ LoadHeapObject(result, current);
       __ cmp(FieldOperand(result, HeapObject::kMapOffset),
                           Handle<Map>(current->map()));
-      DeoptimizeIf(not_equal, env);
+	  DeoptimizeIf(not_equal, env, result, Handle<Map>(current->map()));
       current =
           Handle<HeapObject>(HeapObject::cast(current->map()->prototype()));
     }
@@ -3051,7 +3093,7 @@ void LCodeGen::DoLoadNamedFieldPolymorphic(LLoadNamedFieldPolymorphic* instr) {
     Label check_passed;
     __ CompareMap(object, map, &check_passed);
     if (last && !need_generic) {
-      DeoptimizeIf(not_equal, instr->environment());
+      DeoptimizeIf(not_equal, instr->environment(), object, map);
       __ bind(&check_passed);
       EmitLoadFieldOrConstantFunction(
           result, object, map, name, instr->environment());
@@ -4149,6 +4191,11 @@ void LCodeGen::DoCallNew(LCallNew* instr) {
   ASSERT(ToRegister(instr->context()).is(esi));
   ASSERT(ToRegister(instr->constructor()).is(edi));
   ASSERT(ToRegister(instr->result()).is(eax));
+
+  /*if ( FLAG_trace_internals ) {
+	__ mov(ebx, Immediate((Address)isolate()->get_callnew_pair()));
+	__ mov(Operand(ebx, 0), Immediate(instr->hydrogen()->position()));
+  }*/
 
   // No cell in ebx for construct type feedback in optimized code
   Handle<Object> undefined_value(isolate()->factory()->undefined_value());
@@ -5734,7 +5781,7 @@ void LCodeGen::DoCheckMapCommon(Register reg,
                                 LInstruction* instr) {
   Label success;
   __ CompareMap(reg, map, &success);
-  DeoptimizeIf(not_equal, instr->environment());
+  DeoptimizeIf(not_equal, instr->environment(), reg, map);
   __ bind(&success);
 }
 
@@ -6174,7 +6221,8 @@ void LCodeGen::DoFunctionLiteral(LFunctionLiteral* instr) {
   // Use the fast case closure allocation code that allocates in new
   // space for nested functions that don't need literals cloning.
   bool pretenure = instr->hydrogen()->pretenure();
-  if (!pretenure && instr->hydrogen()->has_no_literals()) {
+  if (!FLAG_trace_internals &&
+	  !pretenure && instr->hydrogen()->has_no_literals()) {
     FastNewClosureStub stub(instr->hydrogen()->language_mode(),
                             instr->hydrogen()->is_generator());
     __ push(Immediate(instr->hydrogen()->shared_info()));
@@ -6516,7 +6564,7 @@ void LCodeGen::DoCheckMapValue(LCheckMapValue* instr) {
   Register object = ToRegister(instr->value());
   __ cmp(ToRegister(instr->map()),
          FieldOperand(object, HeapObject::kMapOffset));
-  DeoptimizeIf(not_equal, instr->environment());
+  DeoptimizeIf(not_equal, instr->environment(), object, Handle<Map>::null(), ToRegister(instr->map()));
 }
 
 

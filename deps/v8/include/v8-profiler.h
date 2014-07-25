@@ -415,6 +415,9 @@ class V8EXPORT HeapProfiler {
   /** Returns a snapshot by index. */
   const HeapSnapshot* GetHeapSnapshot(int index);
 
+  /** Returns a profile by uid. */
+  V8_DEPRECATED(const HeapSnapshot* FindHeapSnapshot(unsigned uid));
+
   /**
    * Returns SnapshotObjectId for a heap object referenced by |value| if
    * it has been seen by the heap profiler, kUnknownObjectId otherwise.

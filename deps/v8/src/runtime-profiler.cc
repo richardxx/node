@@ -161,12 +161,37 @@ void RuntimeProfiler::AttemptOnStackReplacement(JSFunction* function) {
 
   SharedFunctionInfo* shared = function->shared();
   // If the code is not optimizable, don't try OSR.
-  if (!shared->code()->optimizable()) return;
+  if (!shared->code()->optimizable()) {
+	if ( FLAG_trace_internals ) {
+	  Code* code = shared->code();
+	  LOG(function->GetIsolate(),
+			EmitFunctionEvent(
+			Logger::OptFailed,
+			function,
+			code,
+			shared, "OSR@Disabled")
+		  );
+	}
+	return;
+  }
 
   // We are not prepared to do OSR for a function that already has an
   // allocated arguments object.  The optimized code would bypass it for
   // arguments accesses, which is unsound.  Don't try OSR.
-  if (shared->uses_arguments()) return;
+  if (shared->uses_arguments()) {
+	if ( FLAG_trace_internals ) {
+	  Code* code = shared->code();
+	  LOG(function->GetIsolate(),
+			EmitFunctionEvent(
+			Logger::OptFailed,
+			function,
+			code,
+			shared,
+			"OSR@-UseArguments")
+		  );
+	}
+	return;
+  }
 
   // We're using on-stack replacement: patch the unoptimized code so that
   // any back edge in any unoptimized frame will trigger on-stack
@@ -314,13 +339,28 @@ void RuntimeProfiler::OptimizeNow() {
 
     // Do not record non-optimizable functions.
     if (shared->optimization_disabled()) {
+	  // We track the opt failed status immediately
+	  // because later v8 tries to reenable optimization, which erases the opt disable information
+	  if ( FLAG_trace_internals ) {
+		//PrintF("------>optimizeNow exit = %s\n", shared->DebugName()->ToCString());
+		//Flush();
+		Code* code = shared->code();
+		LOG(function->GetIsolate(),
+			  EmitFunctionEvent(
+			  Logger::OptFailed,
+			  function,
+			  code,
+			  shared, NULL)
+			);
+	  }
+
       if (shared->deopt_count() >= FLAG_max_opt_count) {
         // If optimization was disabled due to many deoptimizations,
         // then check if the function is hot and try to reenable optimization.
         int ticks = shared_code->profiler_ticks();
         if (ticks >= kProfilerTicksBeforeReenablingOptimization) {
           shared_code->set_profiler_ticks(0);
-          shared->TryReenableOptimization();
+          shared->TryReenableOptimization("Too hot");
         } else {
           shared_code->set_profiler_ticks(ticks + 1);
         }
@@ -328,7 +368,7 @@ void RuntimeProfiler::OptimizeNow() {
       continue;
     }
     if (!function->IsOptimizable()) continue;
-
+	
     if (FLAG_watch_ic_patching) {
       int ticks = shared_code->profiler_ticks();
 

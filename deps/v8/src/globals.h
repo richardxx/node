@@ -238,6 +238,7 @@ const uint32_t kMaxUInt32 = 0xFFFFFFFFu;
 const int kCharSize     = sizeof(char);      // NOLINT
 const int kShortSize    = sizeof(short);     // NOLINT
 const int kIntSize      = sizeof(int);       // NOLINT
+const int kLongSize		= sizeof(long);		 // NOLINT
 const int kDoubleSize   = sizeof(double);    // NOLINT
 const int kIntptrSize   = sizeof(intptr_t);  // NOLINT
 const int kPointerSize  = sizeof(void*);     // NOLINT

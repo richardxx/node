@@ -495,7 +495,12 @@ class OptimizingCompiler: public ZoneObject {
         time_taken_to_optimize_(0),
         time_taken_to_codegen_(0),
         last_status_(FAILED) { }
-
+  /*
+  ~OptimizingCompiler()
+  {
+	PrintF( "I'm closed.\n" );
+  }
+  */
   enum Status {
     FAILED, BAILED_OUT, SUCCEEDED
   };
@@ -605,7 +610,7 @@ class Compiler : public AllStatic {
                               bool is_toplevel,
                               Handle<Script> script);
 
-  static void InstallOptimizedCode(OptimizingCompiler* info);
+  static OptimizingCompiler::Status InstallOptimizedCode(OptimizingCompiler* info);
 
 #ifdef ENABLE_DEBUGGER_SUPPORT
   static bool MakeCodeForLiveEdit(CompilationInfo* info);

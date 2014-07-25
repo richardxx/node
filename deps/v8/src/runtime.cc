@@ -470,6 +470,7 @@ RUNTIME_FUNCTION(MaybeObject*, Runtime_CreateObjectLiteral) {
     if (boilerplate.is_null()) return Failure::Exception();
     // Update the functions literal and return the boilerplate.
     literals->set(literals_index, *boilerplate);
+	LOG_INTERNAL_EVENT(isolate, EmitObjectEvent(Logger::CreateObjBoilerplate, JSObject::cast(*boilerplate), literals_index));
   }
   return JSObject::cast(*boilerplate)->DeepCopy(isolate);
 }
@@ -496,6 +497,7 @@ RUNTIME_FUNCTION(MaybeObject*, Runtime_CreateObjectLiteralShallow) {
     if (boilerplate.is_null()) return Failure::Exception();
     // Update the functions literal and return the boilerplate.
     literals->set(literals_index, *boilerplate);
+	LOG_INTERNAL_EVENT(isolate, EmitObjectEvent(Logger::CreateObjBoilerplate, JSObject::cast(*boilerplate), literals_index));
   }
   return isolate->heap()->CopyJSObject(JSObject::cast(*boilerplate));
 }
@@ -517,6 +519,7 @@ RUNTIME_FUNCTION(MaybeObject*, Runtime_CreateArrayLiteral) {
     if (boilerplate.is_null()) return Failure::Exception();
     // Update the functions literal and return the boilerplate.
     literals->set(literals_index, *boilerplate);
+	LOG_INTERNAL_EVENT(isolate, EmitObjectEvent(Logger::CreateArrayBoilerplate, JSArray::cast(*boilerplate), literals_index));
   }
   return JSObject::cast(*boilerplate)->DeepCopy(isolate);
 }
@@ -538,6 +541,7 @@ RUNTIME_FUNCTION(MaybeObject*, Runtime_CreateArrayLiteralShallow) {
     if (boilerplate.is_null()) return Failure::Exception();
     // Update the functions literal and return the boilerplate.
     literals->set(literals_index, *boilerplate);
+	LOG_INTERNAL_EVENT(isolate, EmitObjectEvent(Logger::CreateArrayBoilerplate, JSArray::cast(*boilerplate), literals_index));
   }
   if (JSObject::cast(*boilerplate)->elements()->map() ==
       isolate->heap()->fixed_cow_array_map()) {
@@ -4975,10 +4979,16 @@ MaybeObject* Runtime::SetObjectProperty(Isolate* isolate,
           value = number;
         }
       }
+	  /*if ( name->IsString() &&
+		FLAG_trace_internals )
+		PrintF("Runtime Element %s is here.\n", *(String::cast(*name)->ToCString()));*/
       result = js_object->SetElement(
           index, *value, attr, strict_mode, true, set_mode);
     } else {
       if (name->IsString()) Handle<String>::cast(name)->TryFlatten();
+	  /*if ( name->IsString() &&
+		FLAG_trace_internals )
+		PrintF("Runtime Property %s is here.\n", *(String::cast(*name)->ToCString()));*/
       result = js_object->SetProperty(*name, *value, attr, strict_mode);
     }
     if (result->IsFailure()) return result;
@@ -7770,6 +7780,7 @@ RUNTIME_FUNCTION(MaybeObject*, Runtime_NewClosure) {
       isolate->factory()->NewFunctionFromSharedFunctionInfo(shared,
                                                             context,
                                                             pretenure_flag);
+  // We do not log function create event here because it is logged in NewFuncFromShared... call
   return *result;
 }
 
@@ -8016,6 +8027,18 @@ RUNTIME_FUNCTION(MaybeObject*, Runtime_NewObject) {
   isolate->counters()->constructed_objects()->Increment();
   isolate->counters()->constructed_objects_runtime()->Increment();
 
+  /*
+  if ( FLAG_trace_internals ) {
+	//HeapObject** callnew_info = isolate->get_callnew_pair();
+	LOG(isolate,
+	  EmitObjectEvent(
+	  Logger::CreateNewObject,
+	  *result,
+	  *function)
+	);
+  }
+  */
+
   return *result;
 }
 
@@ -8085,22 +8108,60 @@ RUNTIME_FUNCTION(MaybeObject*, Runtime_LazyRecompile) {
   ASSERT(args.length() == 1);
   Handle<JSFunction> function = args.at<JSFunction>(0);
 
+  SharedFunctionInfo *shared = function->shared();
   if (!AllowOptimization(isolate, function)) {
-    function->ReplaceCode(function->shared()->code());
-    return function->code();
+	Code* new_code = shared->code();
+	function->ReplaceCode(new_code);
+	// Perhaps the optimization channel is disabled
+	if ( FLAG_trace_internals ) {
+	  LOG(function->GetIsolate(),
+			EmitFunctionEvent(
+			Logger::OptFailed,
+			*function,
+			new_code,
+			shared, NULL)
+		  );
+	}
+    return new_code;
   }
+
   function->shared()->code()->set_profiler_ticks(0);
   if (JSFunction::CompileOptimized(function,
                                    BailoutId::None(),
                                    CLEAR_EXCEPTION)) {
-    return function->code();
+	// Generate optimized code successfully
+	Code* code = function->code();
+	/*if ( FLAG_trace_internals ) {
+	  LOG(function->GetIsolate(),
+		  EmitFunctionEvent(
+		  Logger::GenOptCode,
+		  *function,
+		  code,
+		  shared)
+		);
+	}*/
+
+    return code;
   }
+
   if (FLAG_trace_opt) {
     PrintF("[failed to optimize ");
     function->PrintName();
     PrintF(": optimized compilation failed]\n");
   }
-  function->ReplaceCode(function->shared()->code());
+
+  if ( FLAG_trace_internals ) {
+	  LOG(function->GetIsolate(),
+		  EmitFunctionEvent(
+		  Logger::OptFailed,
+		  *function,
+		  function->code(),
+		  shared)
+		);
+	}
+
+  // Although optimizing failed, the uncompiled code can be compiled again with deoptimization support
+  function->ReplaceCode(shared->code());
   return function->code();
 }
 
@@ -8126,6 +8187,21 @@ RUNTIME_FUNCTION(MaybeObject*, Runtime_InstallRecompiledCode) {
   CONVERT_ARG_HANDLE_CHECKED(JSFunction, function, 0);
   ASSERT(V8::UseCrankshaft() && FLAG_parallel_recompilation);
   isolate->optimizing_compiler_thread()->InstallOptimizedFunctions();
+
+  // Optimized code is generated by parallel compiler
+  /*Code* code = function->code();
+  if ( FLAG_trace_internals ) {
+	SharedFunctionInfo* shared = function->shared();
+	bool opt_failed = (shared->code() == code ? true : false);
+	LOG(function->GetIsolate(),
+		EmitFunctionEvent(
+		opt_failed == true ?  Logger::OptFailed : Logger::GenOptCode,
+		*function,
+		code,
+		shared)
+	  );
+  }*/
+
   return function->code();
 }
 
@@ -8463,15 +8539,29 @@ RUNTIME_FUNCTION(MaybeObject*, Runtime_CompileForOnStackReplacement) {
   // If the optimization attempt succeeded, return the AST id tagged as a
   // smi. This tells the builtin that we need to translate the unoptimized
   // frame to an optimized one.
+  Smi* res = NULL;
   if (succeeded) {
     ASSERT(function->code()->kind() == Code::OPTIMIZED_FUNCTION);
-    return Smi::FromInt(ast_id.ToInt());
+    res = Smi::FromInt(ast_id.ToInt());
   } else {
     if (function->IsMarkedForLazyRecompilation()) {
       function->ReplaceCode(function->shared()->code());
     }
-    return Smi::FromInt(-1);
+    res = Smi::FromInt(-1);
   }
+
+  if ( FLAG_trace_internals && !succeeded) {
+	Code* code = function->code();
+	LOG(function->GetIsolate(),
+		EmitFunctionEvent(
+		Logger::OptFailed,
+		  *function,
+		  code,
+		  function->shared(), NULL)
+	  );
+  }
+
+  return res;
 }
 
 
@@ -9215,11 +9305,59 @@ RUNTIME_FUNCTION(MaybeObject*, Runtime_DebugPrint) {
 #else
   // ShortPrint is available in release mode. Print is not.
   args[0]->ShortPrint();
+  if ( args[0]->IsJSFunction() ) {
+	  // print code info
+	  JSFunction* js_function = JSFunction::cast(args[0]);
+	  Code* js_code = js_function->code();
+	  
+	  PrintF( " {" );
+	  js_code->ShortPrint();
+	  PrintF( ", Optimized = %s}\n", js_function->IsOptimized() ? "Yes" : "No" );
+  }
 #endif
   PrintF("\n");
   Flush();
 
   return args[0];  // return TOS
+}
+
+RUNTIME_FUNCTION(MaybeObject*, Runtime_GetArrayCapacity) {
+	SealHandleScope shs(isolate);
+	ASSERT(args.length() == 1);
+
+	if ( args[0]->IsJSArray() ) {
+		Handle<JSArray> my_array = args.at<JSArray>(0);
+		int capacity = 0;
+
+		switch (my_array->GetElementsKind()) {
+			case FAST_SMI_ELEMENTS:
+			case FAST_ELEMENTS:
+			case FAST_HOLEY_SMI_ELEMENTS:
+			case FAST_HOLEY_ELEMENTS:
+				capacity = FixedArray::cast( my_array->elements() )->length();
+				break;
+
+			case FAST_DOUBLE_ELEMENTS:
+			case FAST_HOLEY_DOUBLE_ELEMENTS:
+				capacity = FixedDoubleArray::cast( my_array->elements() )->length();
+				break;
+
+		default:
+				capacity = Smi::kMaxValue;
+				break;
+					  
+		}
+
+		if ( capacity == Smi::kMaxValue )
+			PrintF( "-->Sorry, array has degenerated to dictionary.\n" );
+		/*else
+			PrintF( "-->Array Capacity = %d<--\n", capacity );*/
+
+		return Smi::FromInt(capacity);
+	}
+	
+	args[0]->ShortPrint();
+	return args[0];
 }
 
 
@@ -10819,6 +10957,7 @@ RUNTIME_FUNCTION(MaybeObject*, Runtime_GetFrameDetails) {
 
   int count = 0;
   JavaScriptFrameIterator it(isolate, id);
+
   for (; !it.done(); it.Advance()) {
     if (index < count + it.frame()->GetInlineCount()) break;
     count += it.frame()->GetInlineCount();
@@ -13631,6 +13770,118 @@ RUNTIME_FUNCTION(MaybeObject*, Runtime_Log) {
   Vector<const uint8_t> chars = format_content.ToOneByteVector();
   isolate->logger()->LogRuntime(Vector<const char>::cast(chars), elms);
   return isolate->heap()->undefined_value();
+}
+
+
+RUNTIME_FUNCTION(MaybeObject*, Runtime_StartLogInternals) {
+  SealHandleScope shs(isolate);
+  ASSERT(args.length() == 0);
+  FLAG_trace_internals = true;
+  return isolate->heap()->undefined_value();
+}
+
+
+RUNTIME_FUNCTION(MaybeObject*, Runtime_LogFunctionCreate) {
+  SealHandleScope shs(isolate);
+  ASSERT(args.length() == 1);
+  CONVERT_ARG_CHECKED(JSFunction, function, 0);
+  DisallowHeapAllocation no_gc;
+  if ( !FLAG_trace_internals ) return function;
+
+  SharedFunctionInfo* shared = function->shared();
+  LOG( isolate,
+	  	EmitObjectEvent(
+		Logger::CreateFunction,
+		function,
+		shared)
+	);
+
+  return function;
+}
+
+
+RUNTIME_FUNCTION(MaybeObject*, Runtime_LogNewObject) {
+  SealHandleScope shs(isolate);
+  ASSERT(args.length() == 2);
+  CONVERT_ARG_CHECKED(JSObject, object, 0);
+  CONVERT_ARG_CHECKED(JSFunction, constructor, 1);
+  DisallowHeapAllocation no_gc;
+
+  if ( FLAG_trace_internals ) {
+	LOG( isolate,
+	  EmitObjectEvent(
+	  Logger::CreateNewObject,
+	  object,
+	  constructor)
+	);
+  }
+
+  return object;
+}
+
+
+RUNTIME_FUNCTION(MaybeObject*, Runtime_LogNewArray) {
+  SealHandleScope shs(isolate);
+  ASSERT(args.length() == 1);
+  CONVERT_ARG_CHECKED(JSArray, array, 0);
+  DisallowHeapAllocation no_gc;
+  
+  if ( FLAG_trace_internals ) {
+    LOG( isolate,
+	 EmitObjectEvent(
+			 Logger::CreateNewArray,
+			 array,
+			 isolate->array_function()->shared())
+	 );
+  }
+  
+  return array;
+}
+
+
+RUNTIME_FUNCTION(MaybeObject*, Runtime_LogObjectCreate) {
+  SealHandleScope shs(isolate);
+  ASSERT(args.length() == 3);
+  CONVERT_ARG_CHECKED(JSObject, instance, 0);
+  CONVERT_ARG_CHECKED(JSFunction, def_function, 1);
+  CONVERT_SMI_ARG_CHECKED(index, 2);
+  DisallowHeapAllocation no_gc;
+  if ( !FLAG_trace_internals ) return instance;
+
+  Logger::InternalEvent event = (instance->IsJSArray() ? Logger::CreateArrayLiteral : Logger::CreateObjectLiteral);
+  FixedArray* boilerplates = def_function->literals();
+  HeapObject* constructor = HeapObject::cast( boilerplates->get(index) );
+  
+  LOG( isolate,
+	  	EmitObjectEvent(
+		event,
+		instance,
+		constructor,
+		index)
+	);
+  
+  return instance;
+}
+
+
+RUNTIME_FUNCTION(MaybeObject*, Runtime_LogObjectManipulate) {
+  SealHandleScope shs(isolate);
+  DisallowHeapAllocation no_gc;
+  ASSERT(args.length() == 3);
+  CONVERT_SMI_ARG_CHECKED(event, 0);
+  CONVERT_ARG_CHECKED(JSObject, instance, 1);
+  CONVERT_ARG_CHECKED(Map, old_map, 2);
+
+  if ( !FLAG_trace_internals ) return instance;
+
+  LOG( isolate,
+	  	EmitObjectEvent(
+		(Logger::InternalEvent)event,
+		instance, 
+		old_map) 
+  );
+  
+  return instance;
 }
 
 

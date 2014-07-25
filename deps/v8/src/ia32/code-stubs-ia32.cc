@@ -330,7 +330,9 @@ void FastNewClosureStub::Generate(MacroAssembler* masm) {
   __ mov(FieldOperand(eax, JSFunction::kCodeEntryOffset), edx);
 
   // Return and remove the on-stack parameter.
-  __ ret(1 * kPointerSize);
+  Label post_process;
+  __ jmp(&post_process, Label::kFar);
+  //__ ret(1 * kPointerSize);
 
   __ bind(&check_optimized);
 
@@ -386,6 +388,11 @@ void FastNewClosureStub::Generate(MacroAssembler* masm) {
       kDontSaveFPRegs);
 
   // Return and remove the on-stack parameter.
+  __ bind(&post_process);
+  /*if ( FLAG_trace_internals ) {
+	__ push(eax);
+	__ CallRuntime(Runtime::kLogFunctionCreate, 1);
+  }*/
   __ ret(1 * kPointerSize);
 
   __ bind(&restore);

@@ -843,7 +843,21 @@ static bool InstallFullCode(CompilationInfo* info) {
         !Isolate::Current()->DebuggerHasBreakPoints()) {
       CompilationInfoWithZone optimized(function);
       optimized.SetOptimizing(BailoutId::None());
-      return Compiler::CompileLazy(&optimized);
+      bool res = Compiler::CompileLazy(&optimized);
+
+	  // A mysterious place that enables optimization
+	  /*if ( FLAG_trace_internals ) {
+		Code* code = function->code();
+		LOG(function->GetIsolate(),
+			EmitFunctionEvent(
+			Logger::GenOptCode,
+			*function,
+			code,
+			*shared)
+		  );
+	  }*/
+
+	  return res;
     }
   }
   return true;
@@ -900,6 +914,19 @@ static bool InstallCodeFromOptimizedCodeMap(CompilationInfo* info) {
       }
       // Caching of optimized code enabled and optimized code found.
       shared->InstallFromOptimizedCodeMap(*function, index);
+
+	  // We capture the hitting the optimization cache
+	  /*if ( FLAG_trace_internals ) {
+		Code* code = function->code();
+		LOG(function->GetIsolate(),
+			EmitFunctionEvent(
+			Logger::GenOptCode,
+			*function,
+			code,
+			*shared)
+		  );
+	  }*/
+
       return true;
     }
   }
@@ -940,7 +967,6 @@ bool Compiler::CompileLazy(CompilationInfo* info) {
       }
     } else {
       InstallCodeCommon(info);
-
       if (info->IsOptimizing()) {
         Handle<Code> code = info->code();
         ASSERT(shared->scope_info() != ScopeInfo::Empty(isolate));
@@ -1030,7 +1056,7 @@ void Compiler::RecompileParallel(Handle<JSFunction> closure) {
 }
 
 
-void Compiler::InstallOptimizedCode(OptimizingCompiler* optimizing_compiler) {
+OptimizingCompiler::Status Compiler::InstallOptimizedCode(OptimizingCompiler* optimizing_compiler) {
   SmartPointer<CompilationInfo> info(optimizing_compiler->info());
   // The function may have already been optimized by OSR.  Simply continue.
   // Except when OSR already disabled optimization for some reason.
@@ -1043,7 +1069,7 @@ void Compiler::InstallOptimizedCode(OptimizingCompiler* optimizing_compiler) {
       PrintF(" as it has been disabled.\n");
     }
     ASSERT(!info->closure()->IsMarkedForInstallingRecompiledCode());
-    return;
+	return OptimizingCompiler::FAILED;
   }
 
   Isolate* isolate = info->isolate();
@@ -1090,6 +1116,8 @@ void Compiler::InstallOptimizedCode(OptimizingCompiler* optimizing_compiler) {
   // profiler ticks to prevent too soon re-opt after a deopt.
   info->shared_info()->code()->set_profiler_ticks(0);
   ASSERT(!info->closure()->IsMarkedForInstallingRecompiledCode());
+
+  return status;
 }
 
 

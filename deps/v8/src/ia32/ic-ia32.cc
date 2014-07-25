@@ -1596,12 +1596,13 @@ void KeyedStoreIC::GenerateTransitionElementsSmiToDouble(MacroAssembler* masm) {
   //  -- esp[0] : return address
   // -----------------------------------
   // Must return the modified receiver in eax.
-  if (!FLAG_trace_elements_transitions) {
+  if (!FLAG_trace_elements_transitions
+	&& !FLAG_trace_internals) {
     Label fail;
     AllocationSiteMode mode = AllocationSiteInfo::GetMode(FAST_SMI_ELEMENTS,
                                                           FAST_DOUBLE_ELEMENTS);
     ElementsTransitionGenerator::GenerateSmiToDouble(masm, mode, &fail);
-    __ mov(eax, edx);
+	__ mov(eax, edx);
     __ Ret();
     __ bind(&fail);
   }
@@ -1624,7 +1625,8 @@ void KeyedStoreIC::GenerateTransitionElementsDoubleToObject(
   //  -- esp[0] : return address
   // -----------------------------------
   // Must return the modified receiver in eax.
-  if (!FLAG_trace_elements_transitions) {
+  if (!FLAG_trace_elements_transitions
+	&& !FLAG_trace_internals) {
     Label fail;
     AllocationSiteMode mode = AllocationSiteInfo::GetMode(FAST_DOUBLE_ELEMENTS,
                                                           FAST_ELEMENTS);

@@ -653,10 +653,9 @@ Handle<JSFunction> Factory::NewFunctionFromSharedFunctionInfo(
   if (index > 0) {
     // Caching of optimized code enabled and optimized code found.
     function_info->InstallFromOptimizedCodeMap(*result, index);
-    return result;
+    // return result;
   }
-
-  if (V8::UseCrankshaft() &&
+  else if (V8::UseCrankshaft() &&
       FLAG_always_opt &&
       result->is_compiled() &&
       !function_info->is_toplevel() &&
@@ -665,6 +664,19 @@ Handle<JSFunction> Factory::NewFunctionFromSharedFunctionInfo(
       !isolate()->DebuggerHasBreakPoints()) {
     result->MarkForLazyRecompilation();
   }
+
+  // Log function create event
+ // if ( FLAG_trace_internals ) {
+	//Code* code = result->code();
+	//LOG(isolate(),
+	//	EmitFunctionEvent(
+	//	Logger::CreateFunction,
+	//	*result,
+	//	code,		  // The code might be a lazy compile stub
+	//	*function_info)
+	//);
+ // }
+
   return result;
 }
 
@@ -926,6 +938,7 @@ Handle<JSFunction> Factory::NewFunctionWithPrototype(Handle<String> name,
   }
 
   SetPrototypeProperty(function, prototype);
+
   return function;
 }
 
@@ -1007,11 +1020,11 @@ Handle<JSModule> Factory::NewJSModule(Handle<Context> context,
 
 Handle<GlobalObject> Factory::NewGlobalObject(
     Handle<JSFunction> constructor) {
+
   CALL_HEAP_FUNCTION(isolate(),
                      isolate()->heap()->AllocateGlobalObject(*constructor),
-                     GlobalObject);
+		     GlobalObject);
 }
-
 
 
 Handle<JSObject> Factory::NewJSObjectFromMap(Handle<Map> map,
@@ -1029,6 +1042,7 @@ Handle<JSArray> Factory::NewJSArray(int capacity,
   if (capacity != 0) {
     elements_kind = GetHoleyElementsKind(elements_kind);
   }
+
   CALL_HEAP_FUNCTION(isolate(),
                      isolate()->heap()->AllocateJSArrayAndStorage(
                          elements_kind,
@@ -1049,7 +1063,7 @@ Handle<JSArray> Factory::NewJSArrayWithElements(Handle<FixedArrayBase> elements,
                                                      elements_kind,
                                                      elements->length(),
                                                      pretenure),
-      JSArray);
+      JSArray);  
 }
 
 

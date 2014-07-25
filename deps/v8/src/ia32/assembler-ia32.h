@@ -682,6 +682,9 @@ class Assembler : public AssemblerBase {
   void pushfd();
   void popfd();
 
+  void push_all();
+  void pop_all();
+
   void push(const Immediate& x);
   void push_imm32(int32_t imm32);
   void push(Register src);

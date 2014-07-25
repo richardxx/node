@@ -28,10 +28,13 @@
 #ifndef V8_LOG_H_
 #define V8_LOG_H_
 
+#include <map>
 #include "allocation.h"
 #include "objects.h"
 #include "platform.h"
 #include "log-utils.h"
+
+using std::map;
 
 namespace v8 {
 namespace internal {
@@ -96,6 +99,15 @@ class CompilationInfo;
         (isolate)->logger();                        \
     if (logger->is_logging_code_events())           \
       logger->Call;                                 \
+  } while (false)
+
+#define LOG_INTERNAL_EVENT(isolate, Call)           \
+  do {                                              \
+    if ( FLAG_trace_internals ) {                   \
+	  v8::internal::Logger* logger =                \
+        (isolate)->logger();                        \
+	  logger->Call;                                 \
+	}												\
   } while (false)
 
 
@@ -332,6 +344,83 @@ class Logger {
   // Log an event reported from generated code
   void LogRuntime(Vector<const char> format, JSArray* args);
 
+  // ==== Events logged by --trace-internals ===
+#define OBJECT_EVENTS_LIST(V)						\
+  V(CreateObjBoilerplate,	create_obj_boilerplate)			\
+    V(CreateArrayBoilerplate,   create_array_boilerplate)		\
+    V(CreateObjectLiteral,      create_object_literal)			\
+    V(CreateArrayLiteral,	create_array_literal)			\
+    V(CreateNewObject,		create_new_object)			\
+    V(CreateNewArray,		create_new_array)			\
+    V(CreateFunction,           create_function)			\
+    V(CopyObject,	       	copy_object)				\
+    V(ChangePrototype,		change_prototype)			\
+    V(SetMap,			set_map)				\
+    V(NewField,	                new_field)				\
+    V(DelField,			del_field)				\
+    V(WriteFieldTransition,	write_field_transition)			\
+    V(ElemTransition,		elem_transition)			\
+    V(CowCopy,		        cow_copy)				\
+    V(ElemToSlowMode,       elem_to_slow)				\
+    V(PropertyToSlowMode,   prop_to_slow)				\
+    V(ElemToFastMode,       elem_to_fast)				\
+    V(PropertyToFastMode,   prop_to_fast)				  
+  
+#define FUNCTION_EVENTS_LIST(V)						\
+  V(GenFullCode,	    gen_full_code)				\
+    V(GenOptCode,           gen_opt_code)				\
+    V(GenOsrCode,           gen_osr_code)				\
+    V(SetCode,		    set_code)					\
+    V(DisableOpt,	    disable_opt)				\
+    V(ReenableOpt,          reenable_opt)				\
+    V(OptFailed,	    gen_opt_failed)				\
+    V(RegularDeopt,	    regular_deopt)				\
+    V(DeoptAsInline,	    deopt_as_inline)				\
+    V(ForceDeopt,	    force_deopt)				  
+  
+#define MAP_EVENTS_LIST(V)				\
+  V(BeginDeoptOnMap,		begin_deopt_on_map)			  
+  
+#define SYS_EVENTS_LIST(V)						\
+  V(GCMoveObject,			gc_move_object)			\
+    V(GCMoveCode,			gc_move_code)			\
+    V(GCMoveShared,			gc_move_shared)			\
+    V(GCMoveMap,			gc_move_map)			\
+    V(NotifyStackDeoptAll,	notify_stack_deopt_all)			\
+    V(ForDebug,				for_debug)
+  
+  enum InternalEvent {
+#define GetEventName(name, handler) name,
+  
+  OBJECT_EVENTS_LIST(GetEventName)
+  FUNCTION_EVENTS_LIST(GetEventName)
+  MAP_EVENTS_LIST(GetEventName)
+  SYS_EVENTS_LIST(GetEventName)
+  events_count
+
+#undef GetEventname
+  };
+
+  // Trace function actions
+  // Note, we pass func, code, shared separately because 
+  // sometimes, code != func->code(), func == NULL (hence func->shared() is invalid)
+  void EmitFunctionEvent(InternalEvent event, JSFunction* func,
+	Code* new_code, SharedFunctionInfo* shared, ...);
+
+  // Trace object actions
+  // alloc_site is a boilerplace object if object is created by literal
+  // otherwise alloc_site is the sharedinfo of obj's constructor 
+  void EmitObjectEvent(InternalEvent event, JSObject* obj, ...);
+
+  // Trace map evolution
+  void EmitMapEvent(InternalEvent event, ...);
+
+  // We separate gc moving events for efficiency consideration
+  void EmitGCMoveEvent(HeapObject* from, HeapObject* to);
+
+  // For all other system events
+  void EmitSysEvent(InternalEvent event, ...);
+
   bool is_logging() {
     return logging_nesting_ > 0;
   }
@@ -519,6 +608,23 @@ class Logger {
   Address prev_code_;
 
   int64_t epoch_;
+
+  // JSweeter logging facilities
+  static const int jsw_buf_limit = 134217728;            // 128MB
+  char* jsw_msg;
+  int jsw_pos;
+  map<SharedFunctionInfo*, char*>* jsw_func_info;
+  
+  // We build a readable function name
+  const char* get_closure_mark(SharedFunctionInfo*);
+  
+  // Get the enclosing closure for this event
+  JSFunction* get_events_context();
+
+  // Flush the jsweeter message buffer buffer if possible
+  void jsw_log(const char* format, ...);
+  void jsw_log(char c);
+  void jsw_output(bool force = false);
 
   friend class CpuProfiler;
 };

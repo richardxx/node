@@ -921,6 +921,7 @@ MaybeObject* Execution::HandleStackGuardInterrupt(Isolate* isolate) {
     return isolate->StackOverflow();
   }
   if (stack_guard->IsFullDeopt()) {
+	LOG_INTERNAL_EVENT(isolate, EmitSysEvent(Logger::NotifyStackDeoptAll));
     stack_guard->Continue(FULL_DEOPT);
     Deoptimizer::DeoptimizeAll(isolate);
   }

@@ -523,7 +523,21 @@ HValue* CodeStubGraphBuilder<TransitionElementsKindStub>::BuildCodeStub() {
 
   if_builder.End();
 
+  HInstruction* old_map = AddLoad(js_array, HObjectAccess::ForMap());
+
   AddStore(js_array, HObjectAccess::ForMap(), map);
+
+  if ( FLAG_trace_internals ) {
+	// Push the runtime call parameters
+	Add<HPushArgument>(Add<HConstant>(Logger::ElemTransition));
+	Add<HPushArgument>(js_array);
+	Add<HPushArgument>(old_map);
+
+    Add<HCallRuntime>(context(),
+	  isolate()->factory()->empty_string(),
+      Runtime::FunctionForId(Runtime::kLogObjectManipulate),
+      3);
+  }
 
   return js_array;
 }
@@ -559,6 +573,20 @@ HValue* CodeStubGraphBuilderBase::BuildArrayConstructor(
       result = BuildArrayNArgumentsConstructor(&array_builder, kind);
       break;
   }
+
+  // We log array growing action
+ // if ( FLAG_trace_internals ) {
+	//// Push the runtime call parameters
+	//Handle<JSFunction> closure = info()->closure();
+	//Add<HPushArgument>(result);
+	//Add<HPushArgument>(Add<HConstant>(closure));
+	//Add<HPushArgument>(graph()->GetConstantMinus1());
+
+ //   Add<HCallRuntime>(context(),
+	//  isolate()->factory()->empty_string(),
+	//  Runtime::FunctionForId(Runtime::kLogObjectCreate),
+ //     3);
+ // }
 
   return result;
 }
