@@ -61,20 +61,13 @@ compute_distance(ObjectMachine* osm, State* s1, State* s2, deque<Transition*>& p
 
 // Determine the fragile types 
 ObjectMachine*
-check_deoptimization(int failed_obj, int exp_map_id, FunctionMachine* funcM, int bailout_id)
+check_deoptimization(DeoptPack& deopt_pack)
 {
-  // Process instance
-  InstanceDescriptor* i_obj = find_instance(failed_obj, StateMachine::MObject);
-  /*
+  // Identify the instance
+  InstanceDescriptor* i_obj = find_instance(deopt_pack.failed_obj, StateMachine::MObject);
   if ( i_obj == NULL ) {
-    // Might be a bug
-    // We try it by swapping their values
-    i_obj = find_instance(exp_map_id, StateMachine::MObject);
-  }
-  */
-
-  if ( i_obj == NULL ) {
-    printf( "\tOops, never saw this instance: %x\n\n", failed_obj );
+    //printf( "\tOops, never saw this instance: %x\n\n", failed_obj );
+    // Defer the inference based on this object
     return NULL;
   }
 
@@ -82,14 +75,14 @@ check_deoptimization(int failed_obj, int exp_map_id, FunctionMachine* funcM, int
   State* inst_state = osm->get_instance_pos(i_obj->id, false); 
 
   // Process map
-  Map* exp_map = find_map(exp_map_id, false);
+  Map* exp_map = find_map(deopt_pack.exp_mapID, false);
   
   if ( exp_map == NULL ) {
     //exp_map = find_map(failed_obj, false);
     //if ( exp_map == NULL ) exp_map = null_map;
     return osm;
   }
-
+  
   // Process state
   State* exp_state = osm->search_state(exp_map, false);
 
@@ -123,11 +116,11 @@ check_deoptimization(int failed_obj, int exp_map_id, FunctionMachine* funcM, int
   }
 
   printf( "[%s] deoptimized at IC %d, *fix*:\n", 
-	  funcM->toString().c_str(), bailout_id );
+	  deopt_pack.deopt_f->toString().c_str(), deopt_pack.bailout_id );
 
   // Case split
   printf( "\tCaused by object: %s<%x>\n",
-	  osm->toString().c_str(), failed_obj );
+	  osm->toString().c_str(), deopt_pack.failed_obj );
 
   deque<Transition*> path;
   int d = compute_distance(osm, inst_state, exp_state, path);
@@ -186,6 +179,3 @@ check_deoptimization(int failed_obj, int exp_map_id, FunctionMachine* funcM, int
   printf( "\n" );
   return osm;
 }
-
-
-

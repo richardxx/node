@@ -4287,13 +4287,8 @@ MaybeObject* Heap::AllocateFunction(Map* function_map,
   InitializeFunction(JSFunction::cast(result), shared, prototype);
 
   if ( FLAG_trace_internals ) {
-    JSFunction* function = JSFunction::cast(result);
     LOG(isolate(),
-	EmitObjectEvent(
-			Logger::CreateFunction,
-			function,
-			shared)
-	);
+	EmitObjectEvent(Logger::CreateFunction, JSFunction::cast(result), shared));
   }
   
   return result;
@@ -5424,20 +5419,19 @@ MaybeObject* Heap::AllocateJSArray(
   Map* transition_map = isolate()->get_initial_js_array_map(elements_kind);
   if (transition_map != NULL) map = transition_map;
 
-  MaybeObject* array = AllocateJSObjectFromMap(map, pretenure);
+  MaybeObject* result = AllocateJSObjectFromMap(map, pretenure);
   
   if ( FLAG_trace_internals ) {
-    Object* obj;
-    if ( array->To(&obj) ) {
+    Object* array;
+    if ( result->To(&array) ) {
       LOG(isolate(),
-	  EmitObjectEvent(
-			  Logger::CreateNewObject,
-			  JSObject::cast(obj), array_function)
+	  EmitObjectEvent( Logger::CreateNewArray,
+			   JSObject::cast(array), array_function)
 	  );
     }
   }
   
-  return array;
+  return result;
 }
 
 
@@ -5455,8 +5449,21 @@ MaybeObject* Heap::AllocateJSArrayWithAllocationSite(
       map = Map::cast(maybe_transitioned_map);
     }
   }
-  return AllocateJSObjectFromMapWithAllocationSite(map,
+
+  MaybeObject* result = AllocateJSObjectFromMapWithAllocationSite(map,
       allocation_site_info_payload);
+
+  if ( FLAG_trace_internals ) {
+    Object* array;
+    if ( result->To(&array) ) {
+      LOG(isolate(),
+	  EmitObjectEvent( Logger::CreateNewArray,
+			   JSObject::cast(array), array_function)
+	  );
+    }
+  }
+  
+  return result;
 }
 
 
@@ -5823,6 +5830,14 @@ MaybeObject* Heap::AllocateFunctionContext(int length, JSFunction* function) {
   context->set_previous(function->context());
   context->set_extension(Smi::FromInt(0));
   context->set_global_object(function->context()->global_object());
+
+  if ( FLAG_trace_internals ) {
+    LOG(isolate(),
+	EmitObjectEvent(
+			Logger::CreateContext, context)
+	);
+  }
+
   return context;
 }
 

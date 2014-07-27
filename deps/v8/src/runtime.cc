@@ -470,9 +470,24 @@ RUNTIME_FUNCTION(MaybeObject*, Runtime_CreateObjectLiteral) {
     if (boilerplate.is_null()) return Failure::Exception();
     // Update the functions literal and return the boilerplate.
     literals->set(literals_index, *boilerplate);
-	LOG_INTERNAL_EVENT(isolate, EmitObjectEvent(Logger::CreateObjBoilerplate, JSObject::cast(*boilerplate), literals_index));
+    LOG_INTERNAL_EVENT(isolate, 
+		       EmitObjectEvent(Logger::CreateObjBoilerplate, JSObject::cast(*boilerplate), literals_index));
   }
-  return JSObject::cast(*boilerplate)->DeepCopy(isolate);
+
+  JSObject* boilerplate_object = JSObject::cast(*boilerplate);
+  MaybeObject* result = boilerplate_object->DeepCopy(isolate);
+  
+  // Log the newly created object literal
+  if ( FLAG_trace_internals ) {
+    Object *obj;
+    if ( result->ToObject(&obj) ) {
+      LOG(isolate, 
+	  EmitObjectEvent(Logger::CreateObjectLiteral, JSObject::cast(obj), 
+			  boilerplate_object, literals_index));
+    }
+  }
+ 
+  return result;
 }
 
 
@@ -497,9 +512,27 @@ RUNTIME_FUNCTION(MaybeObject*, Runtime_CreateObjectLiteralShallow) {
     if (boilerplate.is_null()) return Failure::Exception();
     // Update the functions literal and return the boilerplate.
     literals->set(literals_index, *boilerplate);
-	LOG_INTERNAL_EVENT(isolate, EmitObjectEvent(Logger::CreateObjBoilerplate, JSObject::cast(*boilerplate), literals_index));
+    // Log the boilterplace creation
+    LOG_INTERNAL_EVENT(isolate, 
+		       EmitObjectEvent(Logger::CreateObjBoilerplate, 
+				       JSObject::cast(*boilerplate), literals_index));
   }
-  return isolate->heap()->CopyJSObject(JSObject::cast(*boilerplate));
+
+  JSObject* boilerplate_object = JSObject::cast(*boilerplate);
+  MaybeObject* result = isolate->heap()->CopyJSObject(boilerplate_object);
+  
+  // Log the newly created object literal
+  
+  if ( FLAG_trace_internals ) {
+    Object *obj;
+    if ( result->ToObject(&obj) ) {
+      LOG(isolate, 
+	  EmitObjectEvent(Logger::CreateObjectLiteral, JSObject::cast(obj), 
+			  boilerplate_object, literals_index));
+    }
+  }
+  
+  return result;
 }
 
 
@@ -519,9 +552,24 @@ RUNTIME_FUNCTION(MaybeObject*, Runtime_CreateArrayLiteral) {
     if (boilerplate.is_null()) return Failure::Exception();
     // Update the functions literal and return the boilerplate.
     literals->set(literals_index, *boilerplate);
-	LOG_INTERNAL_EVENT(isolate, EmitObjectEvent(Logger::CreateArrayBoilerplate, JSArray::cast(*boilerplate), literals_index));
+    LOG_INTERNAL_EVENT(isolate, EmitObjectEvent(Logger::CreateArrayBoilerplate, 
+						JSObject::cast(*boilerplate), literals_index));
   }
-  return JSObject::cast(*boilerplate)->DeepCopy(isolate);
+  
+  JSObject* boilerplate_object = JSObject::cast(*boilerplate);
+  MaybeObject* result = boilerplate_object->DeepCopy(isolate);
+
+  // Log the newly created array literal
+  if ( FLAG_trace_internals ) {
+    Object *obj;
+    if ( result->ToObject(&obj) ) {
+      LOG(isolate, 
+	  EmitObjectEvent(Logger::CreateObjectLiteral, JSObject::cast(obj), 
+			  boilerplate_object, literals_index));
+    }
+  }
+  
+  return result;
 }
 
 
@@ -541,21 +589,38 @@ RUNTIME_FUNCTION(MaybeObject*, Runtime_CreateArrayLiteralShallow) {
     if (boilerplate.is_null()) return Failure::Exception();
     // Update the functions literal and return the boilerplate.
     literals->set(literals_index, *boilerplate);
-	LOG_INTERNAL_EVENT(isolate, EmitObjectEvent(Logger::CreateArrayBoilerplate, JSArray::cast(*boilerplate), literals_index));
+    LOG_INTERNAL_EVENT(isolate, 
+		       EmitObjectEvent(Logger::CreateArrayBoilerplate, 
+				       JSObject::cast(*boilerplate), literals_index));
   }
   if (JSObject::cast(*boilerplate)->elements()->map() ==
       isolate->heap()->fixed_cow_array_map()) {
     isolate->counters()->cow_arrays_created_runtime()->Increment();
   }
-
+  
   JSObject* boilerplate_object = JSObject::cast(*boilerplate);
   AllocationSiteMode mode = AllocationSiteInfo::GetMode(
       boilerplate_object->GetElementsKind());
+
+  MaybeObject *result;
   if (mode == TRACK_ALLOCATION_SITE) {
-    return isolate->heap()->CopyJSObjectWithAllocationSite(boilerplate_object);
+    result = isolate->heap()->CopyJSObjectWithAllocationSite(boilerplate_object);
+  }
+  else {
+    result = isolate->heap()->CopyJSObject(boilerplate_object);
   }
 
-  return isolate->heap()->CopyJSObject(boilerplate_object);
+  // Log the newly created array literal
+  if ( FLAG_trace_internals ) {
+    Object *obj;
+    if ( result->To(&obj) ) {
+      LOG(isolate, 
+	  EmitObjectEvent(Logger::CreateObjectLiteral, JSObject::cast(obj), 
+			  boilerplate_object, literals_index));
+    }
+  }
+
+  return result;
 }
 
 

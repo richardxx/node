@@ -11,6 +11,7 @@
   V(CreateArrayLiteral,     create_array_literal)		\
   V(CreateNewObject,        create_new_object)			\
   V(CreateNewArray,         create_new_array)			\
+  V(CreateContext,        create_context)			\
   V(CreateFunction,       create_function)			\
   V(CopyObject,           copy_object)				\
   V(ChangePrototype,      change_prototype)			\

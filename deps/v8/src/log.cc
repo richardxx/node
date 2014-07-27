@@ -667,7 +667,7 @@ const char* Logger::get_closure_mark(SharedFunctionInfo* shared)
     return "JSArray";
   else if ( shared == isolate_->object_function()->shared() )
     return "JSObject";
-  
+
   // If this function is not defined in any script file, just ignore it
   Object* maybe_script = shared->script();
   if ( !maybe_script->IsScript() ) {
@@ -677,54 +677,60 @@ const char* Logger::get_closure_mark(SharedFunctionInfo* shared)
 
   Handle<Script> script(Script::cast(maybe_script));
 
-  // Obtain the script name and source Line
-  char* p_script_name = NULL;
-  int script_name_len = 0;
-  int line_num = -1;
-  
-  line_num = GetScriptLineNumber( script, 
-				  shared->start_position()) + 1;
+  // Obtain the location of this function in source code
+  int line_num = GetScriptLineNumber( script, 
+				      shared->start_position());
   
   // Line_num == -1 or non-string script name
-  // Don't understand the situation
-  if ( line_num == -1 || 
-       !script->name()->IsString()) {
+  if ( line_num == -1 ) {
     (*jsw_func_info)[shared] = NULL;
     return NULL;
   }
+  
+  // Obtain the script name
+  char* p_script_name = NULL;
+  int script_name_len = 0;
 
-  Handle<String> script_name(String::cast(script->name()));
-  int full_path_len = script_name->length();
-  
-  // The script name might be a full path and has space
-  // We just truncate to the file name
-  char* script_full_path = script_name->ToAsciiArray();
-  int i = full_path_len -1;
-  for ( ; i > -1; --i ) {
-    char c = script_full_path[i];
-    if ( c == ' ' || c == '/' ) break;
+  if ( script->name()->IsString() ) {
+    Handle<String> script_name(String::cast(script->name()));
+    int full_path_len = script_name->length();
+    
+    // The script name might be a full path and has space
+    // We just truncate to the file name
+    char* script_full_path = script_name->ToAsciiArray();
+    int i = full_path_len -1;
+    for ( ; i > -1; --i ) {
+      char c = script_full_path[i];
+      if ( c == ' ' || c == '/' ) break;
+    }
+    
+    // Copy
+    p_script_name = new char[full_path_len - i + 1];
+    strcpy( p_script_name, script_full_path + i + 1 );
+    script_name_len = strlen(p_script_name);
   }
-  
-  // Copy
-  p_script_name = new char[full_path_len - i + 1];
-  strcpy( p_script_name, script_full_path + i + 1 );
-  script_name_len = strlen(p_script_name);
-  
+  else {
+    // Don't understand why script has no name
+    p_script_name = new char[10];
+    strcpy( p_script_name, "internal");
+    script_name_len = 8;
+  }
+
   // Obtain the function name
   const char* p_func_name = NULL;
   int func_name_len = 0;
 
   String* debug_name = shared->DebugName();
-  if ( debug_name != NULL ) {
+  if ( debug_name != NULL &&
+       (func_name_len = debug_name->length()) != 0 ) {
+    // Use the internal buffer in ToAsciiArray
     p_func_name = debug_name->ToAsciiArray();
-    func_name_len = debug_name->length();
-
+    
     //SmartArrayPointer<char> c_f_name = debug_name->ToCString();
     //p_func_name = c_f_name.Detach();      // Otherwise, the memory will be lost!!!! not \0 terminated
   }
   else {
-    // In theory, this branch will not take
-    p_func_name = "Noname*";
+    p_func_name = "Closure*";
     func_name_len = 7;
   }
 
@@ -732,7 +738,7 @@ const char* Logger::get_closure_mark(SharedFunctionInfo* shared)
   char *name_buf = new char[func_name_len + script_name_len + 32];
   
   sprintf(name_buf, "%s@%s:%d", 
-	  p_func_name, p_script_name, line_num);
+	  p_func_name, p_script_name, line_num + 1);
 
   // Remember the temporary memory
   delete p_script_name;
@@ -811,7 +817,7 @@ JSFunction* Logger::get_events_context()
 }
 
 
-void Logger::EmitObjectEvent(InternalEvent event, JSObject* obj, ...)
+void Logger::EmitObjectEvent(InternalEvent event, HeapObject* obj, ...)
 {
   if (!log_->IsEnabled()) return;
 
@@ -830,10 +836,9 @@ void Logger::EmitObjectEvent(InternalEvent event, JSObject* obj, ...)
 	   def_function,
 	   obj);
 
-  // In case some events need more options
-  va_list arg_ptr;
   Map* cur_map = obj->map();
-
+  va_list arg_ptr;
+  
   switch (event)
   {
   case CreateObjBoilerplate:
@@ -853,15 +858,13 @@ void Logger::EmitObjectEvent(InternalEvent event, JSObject* obj, ...)
 	{
 	  va_start(arg_ptr, obj);
 	  // Boilerplate
-	  HeapObject* constructor = va_arg(arg_ptr, HeapObject*);
+	  HeapObject* boilerplate_object = va_arg(arg_ptr, HeapObject*);
 	  // Get index of the boilerplate
 	  int index = va_arg(arg_ptr, int);
 	  va_end(arg_ptr);
-
-	  jsw_log( " %x %x ", constructor, cur_map);
 	  
-	  // Print the name of elcosing function for log readability
-	  jsw_log( "%s->%d", func_desc, index );
+	  jsw_log( " %x %x %s->%d", boilerplate_object, cur_map,
+		   func_desc, index );
 	}
 	break;
 
@@ -882,6 +885,14 @@ void Logger::EmitObjectEvent(InternalEvent event, JSObject* obj, ...)
 	}
 	break;
 
+  case CreateContext:
+    {
+      // Context is actually a fixed size array
+      // We record context because it may cause deoptimizations
+      jsw_log( " %x", cur_map );
+    }
+    break;
+    
   case CreateFunction:
 	{
 	  // Obtain the shared info for the newly created closure
@@ -958,9 +969,10 @@ void Logger::EmitObjectEvent(InternalEvent event, JSObject* obj, ...)
 	// Fall through
   case CowCopy:
 	{
+	  JSObject *array = JSObject::cast(obj);
 	  ElementsKind kind = cur_map->elements_kind();
 	  int base_size = IsFastDoubleElementsKind(kind) ? kDoubleSize : kPointerSize;
-	  int capacity = obj->elements()->length();
+	  int capacity = array->elements()->length();
 	  int bytes = base_size * capacity;
 	  jsw_log( " %d", bytes );
 	}

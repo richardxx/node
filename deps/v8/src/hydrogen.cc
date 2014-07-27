@@ -5426,7 +5426,9 @@ void HOptimizedGraphBuilder::VisitObjectLiteral(ObjectLiteral* expr) {
   // of the property values and is the value of the entire expression.
   Push(literal);
 
+  /*
   // We log the array created at this literal
+  // NOTE: move the logging to the runtime CreteObjectLiteral
   int literal_index = expr->literal_index();
   if (FLAG_trace_internals) {
 	Add<HPushArgument>(literal);
@@ -5438,7 +5440,8 @@ void HOptimizedGraphBuilder::VisitObjectLiteral(ObjectLiteral* expr) {
 			  Runtime::FunctionForId(Runtime::kLogObjectCreate),
 			  3);
   }
-  
+  */
+
   expr->CalculateEmitStore(zone());
 
   for (int i = 0; i < expr->properties()->length(); i++) {
@@ -5595,6 +5598,7 @@ void HOptimizedGraphBuilder::VisitArrayLiteral(ArrayLiteral* expr) {
   // The literal index is on the stack, too.
   Push(Add<HConstant>(expr->literal_index()));
 
+  /*
   if ( FLAG_trace_internals ) {
     // We log the array created at this literal
     int literal_index = expr->literal_index();
@@ -5610,6 +5614,7 @@ void HOptimizedGraphBuilder::VisitArrayLiteral(ArrayLiteral* expr) {
                       Runtime::FunctionForId(Runtime::kLogObjectCreate),
                       3);
   }
+  */
 
   HInstruction* elements = NULL;
 

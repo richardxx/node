@@ -67,6 +67,9 @@ static map<int, StateMachine*> machines[StateMachine::MCount];
 // From function/object/map instance to internal descriptor
 static map<int, InstanceDescriptor*> instances[StateMachine::MCount];
 
+// For deferred inference
+static map<int, DeoptPack*> deferred_objs;
+
 // Internal id counters
 static int id_counter[StateMachine::MCount];
 static int sig_for_hidden[StateMachine::MCount];
@@ -213,6 +216,17 @@ create_obj_common(FILE* file, StateMachine::Mtype type, const char* msg)
 
   // Install context
   install_context(def_function, trans);
+  
+  // Processing the deferred deoptimizations
+  map<int, DeoptPack*>::iterator it = deferred_objs.find(o_addr);
+  if ( it != deferred_objs.end() ) {
+    DeoptPack* deopt_pack = it->second;
+    ObjectMachine* osm = check_deoptimization( *deopt_pack );
+    if ( osm != NULL ) {
+      osm->cause_deopt = true;
+      deferred_objs.erase(it);
+    }
+  }
 }
 
 
@@ -241,6 +255,44 @@ static void
 create_new_array(FILE* file)
 {
   create_obj_common(file, StateMachine::MObject, "+Ary");
+}
+
+
+static void
+create_context(FILE* file)
+{
+  int def_function;
+  int o_addr;
+  int alloc_sig;
+  int map_id;
+  
+  fscanf( file, "%x %x %x",
+	  &def_function, &o_addr, &map_id);
+  
+  // We lookup the instance first, because some operations may already use this object
+  InstanceDescriptor* i_desc = find_instance(o_addr, StateMachine::MObject, true, false);
+  
+  // We lookup the automaton for this object with the signature of its constructor
+  // Therefore, an object automaton is for all the objects with the same constructor
+  StateMachine* sm = find_signature(alloc_sig, StateMachine::MObject, true);
+
+  if ( i_desc->sm != sm ) {
+    // In case they are different, it could be this instance was reclaimed by GC
+    // We directly reset the machine to new machine
+    i_desc->sm = sm;
+  }
+
+  // If this is a new machine
+  if ( !sm->has_name() ) {
+    sm->set_name( "FunctionContext" );
+  }
+  
+  // Update transitions
+  ObjectMachine* osm = (ObjectMachine*)sm;
+  Transition* trans = osm->evolve(i_desc, -1, map_id, NULL, "+Fctxt", 0, true);
+
+  // Install context
+  install_context(def_function, trans);
 }
 
 
@@ -704,8 +756,15 @@ regular_deopt(FILE* file)
   }
 
   // Check
-  ObjectMachine* osm = check_deoptimization(failed_obj, exp_map_id, funcM, bailout_id);
-  if ( osm != NULL )
+  DeoptPack deopt_pack(failed_obj, exp_map_id, funcM, bailout_id);
+  ObjectMachine* osm = check_deoptimization(deopt_pack);
+
+  if ( osm == NULL ) {
+    // Cache this object
+    DeoptPack *dp = new DeoptPack( deopt_pack );
+    deferred_objs[failed_obj] = dp; 
+  }
+  else
     osm->cause_deopt = true;
 }
 

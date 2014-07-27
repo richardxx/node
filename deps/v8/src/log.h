@@ -352,6 +352,7 @@ class Logger {
     V(CreateArrayLiteral,	create_array_literal)			\
     V(CreateNewObject,		create_new_object)			\
     V(CreateNewArray,		create_new_array)			\
+    V(CreateContext,            create_context)				\
     V(CreateFunction,           create_function)			\
     V(CopyObject,	       	copy_object)				\
     V(ChangePrototype,		change_prototype)			\
@@ -408,9 +409,8 @@ class Logger {
 	Code* new_code, SharedFunctionInfo* shared, ...);
 
   // Trace object actions
-  // alloc_site is a boilerplace object if object is created by literal
-  // otherwise alloc_site is the sharedinfo of obj's constructor 
-  void EmitObjectEvent(InternalEvent event, JSObject* obj, ...);
+  // obj could ba an JSObject, JSArray, Context, and etc.
+  void EmitObjectEvent(InternalEvent event, HeapObject* obj, ...);
 
   // Trace map evolution
   void EmitMapEvent(InternalEvent event, ...);

@@ -93,8 +93,8 @@ enum BindingFlags {
 // class is a convenience interface casted on a FixedArray object.
 //
 // Note: Context must have no virtual functions and Context objects
-// must always be allocated via Heap::AllocateContext() or
-// Factory::NewContext.
+// must always be allocated via Heap::AllocateFunctionContext() or
+// Factory::NewFunctionContext.
 
 #define NATIVE_CONTEXT_FIELDS(V) \
   V(GLOBAL_PROXY_INDEX, JSObject, global_proxy_object) \
