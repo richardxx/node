@@ -1296,10 +1296,6 @@ class Isolate {
   DateCache* date_cache_;
   unibrow::Mapping<unibrow::Ecma262Canonicalize> interp_canonicalize_mapping_;
   CodeStubInterfaceDescriptor* code_stub_interface_descriptors_;
-  
-  // Xiao's priviate extensions
-  HeapObject** opt_code_fail_pair_;
-  HeapObject** callnew_pair_;
 
   // The garbage collector should be a little more aggressive when it knows
   // that a context was recently exited.
@@ -1381,15 +1377,16 @@ class Isolate {
 
   DISALLOW_COPY_AND_ASSIGN(Isolate);
 
-public:
-	// For Xiao's public functions
-  HeapObject** get_opt_code_fail_pair() {
-	return opt_code_fail_pair_;
-  }
-
-  HeapObject** get_callnew_pair() {
-	return callnew_pair_;
-  }
+  // Used by JITed code to record deoptimization information
+  struct jswDeoptPack
+  {
+    HeapObject* function;         // The deoptimized function
+    HeapObject* object;           // The object that triggers the deoptimization
+    int ckmap_site;               // The map check site for the deoptimization
+  } *jsw_deopt_pack_;
+  
+ public:
+  jswDeoptPack* get_jsw_deopt_pack() {return jsw_deopt_pack_;}
 };
 
 

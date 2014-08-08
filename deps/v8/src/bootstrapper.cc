@@ -73,7 +73,8 @@ Bootstrapper::Bootstrapper(Isolate* isolate)
       nesting_(0),
       extensions_cache_(Script::TYPE_EXTENSION),
       delete_these_non_arrays_on_tear_down_(NULL),
-      delete_these_arrays_on_tear_down_(NULL) {
+      delete_these_arrays_on_tear_down_(NULL),
+      finish_native_init_(false) {
 }
 
 
@@ -322,6 +323,7 @@ Handle<Context> Bootstrapper::CreateEnvironment(
   if (env.is_null() || !InstallExtensions(env, extensions)) {
     return Handle<Context>();
   }
+  finish_native_init_ = true;
   return scope.CloseAndEscape(env);
 }
 

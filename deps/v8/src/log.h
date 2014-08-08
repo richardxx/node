@@ -101,14 +101,21 @@ class CompilationInfo;
       logger->Call;                                 \
   } while (false)
 
-#define LOG_INTERNAL_EVENT(isolate, Call)           \
-  do {                                              \
-    if ( FLAG_trace_internals ) {                   \
-	  v8::internal::Logger* logger =                \
-        (isolate)->logger();                        \
-	  logger->Call;                                 \
-	}												\
+#define LOG_INTERNAL_EVENT(isolate, Call)				\
+  do {									\
+    if ( FLAG_trace_internals ) {					\
+      v8::internal::Logger* logger =					\
+	(isolate)->logger();						\
+      logger->Call;							\
+    }									\
   } while (false)
+
+#define LOG_CALL_RETURN(isolate, Call, Ret)				\
+  do {									\
+    v8::internal::Logger* logger =					\
+      (isolate)->logger();						\
+    Ret = logger->Call;							\
+  } while(false)
 
 
 #define LOG_EVENTS_AND_TAGS_LIST(V)                                     \
@@ -379,8 +386,9 @@ class Logger {
     V(DeoptAsInline,	    deopt_as_inline)				\
     V(ForceDeopt,	    force_deopt)				  
   
-#define MAP_EVENTS_LIST(V)				\
-  V(BeginDeoptOnMap,		begin_deopt_on_map)			  
+#define MAP_EVENTS_LIST(V)						\
+  V(BeginDeoptOnMap,	    begin_deopt_on_map)				\
+    V(GenDeoptMaps,         gen_opt_ic_maps)	
   
 #define SYS_EVENTS_LIST(V)						\
   V(GCMoveObject,			gc_move_object)			\
@@ -411,15 +419,18 @@ class Logger {
   // Trace object actions
   // obj could ba an JSObject, JSArray, Context, and etc.
   void EmitObjectEvent(InternalEvent event, HeapObject* obj, ...);
-
-  // Trace map evolution
+  
+  // Trace anything related to maps
   void EmitMapEvent(InternalEvent event, ...);
-
+  
   // We separate gc moving events for efficiency consideration
   void EmitGCMoveEvent(HeapObject* from, HeapObject* to);
-
+  
   // For all other system events
   void EmitSysEvent(InternalEvent event, ...);
+  
+  // Get an ID for a bailout site
+  int getBailoutID();
 
   bool is_logging() {
     return logging_nesting_ > 0;
@@ -614,7 +625,8 @@ class Logger {
   char* jsw_msg;
   int jsw_pos;
   map<SharedFunctionInfo*, char*>* jsw_func_info;
-  
+  int ic_counters;
+
   // We build a readable function name
   const char* get_closure_mark(SharedFunctionInfo*);
   

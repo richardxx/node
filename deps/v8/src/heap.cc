@@ -5831,13 +5831,7 @@ MaybeObject* Heap::AllocateFunctionContext(int length, JSFunction* function) {
   context->set_extension(Smi::FromInt(0));
   context->set_global_object(function->context()->global_object());
 
-  if ( FLAG_trace_internals ) {
-    LOG(isolate(),
-	EmitObjectEvent(
-			Logger::CreateContext, context)
-	);
-  }
-
+  //LOG_INTERNAL_EVENT(isolate(), EmitObjectEvent(Logger::CreateContext, context));
   return context;
 }
 

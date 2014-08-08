@@ -277,10 +277,18 @@ class LCodeGen BASE_EMBEDDED {
                     LEnvironment* environment,
                     Deoptimizer::BailoutType bailout_type);
 
-  // Expected map can be passed in either ways but not both
+  // Emit code to collect the bailout triggering object
+  void TraceDeoptObject(int, Register);
+
+  // Deoptimize due to failure of map check
+  // Trace the deoptimization when deopt_obj is not null
   void DeoptimizeIf(Condition cc, LEnvironment* environment, 
-	Register deopt_obj = no_reg, 
-	Handle<Map> expected_map = Handle<Map>::null(), Register reg_expected_map = no_reg );
+		    Register deopt_obj = no_reg, 
+		    Handle<Map> expected_map = Handle<Map>::null());
+  
+  // Deoptimize due to PIC maps check failure
+  void DeoptimizeIf(Condition cc, LEnvironment* environment, 
+		    Register deopt_obj, SmallMapList* map_list);
 
   void SoftDeoptimize(LEnvironment* environment);
 

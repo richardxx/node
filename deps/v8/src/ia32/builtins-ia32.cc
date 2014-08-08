@@ -162,7 +162,8 @@ static void Generate_JSConstructStubHelper(MacroAssembler* masm,
     // Try to allocate the object without transitioning into C code. If any of
     // the preconditions is not met, the code bails out to the runtime call.
     Label rt_call, allocated;
-    if (FLAG_inline_new) {
+    if (FLAG_inline_new &&
+	!FLAG_trace_internals) {
       Label undo_allocation;
 #ifdef ENABLE_DEBUGGER_SUPPORT
       ExternalReference debug_step_in_fp =
@@ -337,11 +338,13 @@ static void Generate_JSConstructStubHelper(MacroAssembler* masm,
 
     // Allocate the new receiver object using the runtime call.
     __ bind(&rt_call);
-	//if ( FLAG_trace_internals ) {
-	  /*__ mov(eax, Operand(ebp, JavaScriptFrameConstants::kFunctionOffset));
-	  __ mov(ebx, Immediate((Address)Isolate::Current()->get_function_before_runtime_var()));
-	  __ mov(Operand(ebx, 0), eax);*/
-	//}
+
+    //if ( FLAG_trace_internals ) {
+    /*__ mov(eax, Operand(ebp, JavaScriptFrameConstants::kFunctionOffset));
+      __ mov(ebx, Immediate((Address)Isolate::Current()->get_function_before_runtime_var()));
+      __ mov(Operand(ebx, 0), eax);*/
+    //}
+
     // Must restore edi (constructor) before calling runtime.
     __ mov(edi, Operand(esp, 0));
     // edi: function (constructor)

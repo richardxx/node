@@ -133,6 +133,8 @@ class Bootstrapper {
 
   SourceCodeCache* extensions_cache() { return &extensions_cache_; }
 
+  bool isInitialized() { return finish_native_init_; }
+
  private:
   Isolate* isolate_;
   typedef int NestingCounterType;
@@ -142,6 +144,8 @@ class Bootstrapper {
   List<char*>* delete_these_non_arrays_on_tear_down_;
   // This is for delete[]
   List<char*>* delete_these_arrays_on_tear_down_;
+  // Has the natives been built
+  bool finish_native_init_;
 
   friend class BootstrapperActive;
   friend class Isolate;

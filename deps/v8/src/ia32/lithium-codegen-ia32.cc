@@ -909,55 +909,114 @@ void LCodeGen::DeoptimizeIf(Condition cc,
     }
   }
 }
+  
+void LCodeGen::TraceDeoptObject(int ckmap_site, Register deopt_obj)
+{
+  // Search for a register other than that stores the object
+  Register regs[2] = {no_reg, no_reg};
+  int j = 0;
+  for ( int i = 0; i < Register::kNumRegisters && j < 2; ++i )
+    if ( i != deopt_obj.code() ) {
+      regs[j++] = Register::from_code(i);
+    }
+  
+  Register fail_info = regs[0];
+  Register tmp = regs[1];
 
+  // Save registers
+  __ push(fail_info);
+  __ push(tmp);
+  
+  // Load the pointer to the failure recorder
+  Isolate::jswDeoptPack* pack = info()->isolate()->get_jsw_deopt_pack();
+  __ mov(fail_info, Immediate(ExternalReference(pack)));
+  
+  // Record the deoptimized function
+  __ mov(tmp, Operand(ebp, JavaScriptFrameConstants::kFunctionOffset));
+  __ mov(Operand(fail_info, 0), tmp);
+  
+  // Record the object that triggers deoptimization
+  __ mov(Operand(fail_info, kPointerSize), deopt_obj);
+  
+  // Record the map check failure site
+  __ mov(Operand(fail_info, kPointerSize*2), Immediate(ckmap_site));
+  
+  // Restore registers
+  __ pop(tmp);
+  __ pop(fail_info);
+}
 
 void LCodeGen::DeoptimizeIf(Condition cc,
                             LEnvironment* environment,
-							Register deopt_obj,
-							Handle<Map> expected_map,
-							Register reg_expected_map) {
+			    Register deopt_obj,
+			    Handle<Map> expected_map) {
   bool is_stub = info()->IsStub();
   Deoptimizer::BailoutType bailout_type = is_stub
-      ? Deoptimizer::LAZY
+    ? Deoptimizer::LAZY
       : Deoptimizer::EAGER;
 
-  bool do_log = (FLAG_trace_internals && deopt_obj.is_valid());
+  bool do_log = (!is_stub && FLAG_trace_internals && deopt_obj.is_valid());
   Label no_log;
 
   if ( do_log ) {
-	Isolate* isolate = info()->isolate();
-	  
-	if ( cc != no_condition )
-	  __ j(NegateCondition(cc), &no_log, Label::kNear);
+    if ( cc != no_condition )
+      __ j(NegateCondition(cc), &no_log, Label::kNear);
 
-	int i = 0;
-	for ( ; i < Register::kNumRegisters; ++i )
-	  if ( deopt_obj.code() != i )
-		break;
+    // First apply for an ID for the bailout site
+    Isolate* isolate = info()->isolate();
 
-	Register failed_pair_ptr = Register::from_code(i);
-
-	// Save registers
-	__ push(failed_pair_ptr);
-
-	// We write information into global data area
-	__ mov(failed_pair_ptr, Immediate(ExternalReference(isolate->get_opt_code_fail_pair())));
-	__ mov(Operand(failed_pair_ptr, 0), deopt_obj);
-	if ( !expected_map.is_null() )
-	  __ mov(Operand(failed_pair_ptr, kPointerSize), Immediate(expected_map));
-	else if ( !reg_expected_map.is(no_reg) )
-	  __ mov(Operand(failed_pair_ptr, kPointerSize), reg_expected_map);
-	else
-	  __ mov(Operand(failed_pair_ptr, kPointerSize), Immediate(0));
-
-	// Restore registers
-	__ pop(failed_pair_ptr);
+    // This ID is dynamically accumulated, not that one maintained in AST nodes
+    int ckmap_site = -1;
+    LOG_CALL_RETURN(isolate, getBailoutID(), ckmap_site);
+    
+    // Using -1 as an indicator for single map output
+    LOG(isolate,
+	EmitMapEvent(Logger::GenDeoptMaps, ckmap_site, -1, *expected_map));
+    
+    TraceDeoptObject(ckmap_site, deopt_obj);
   }
 
   DeoptimizeIf(cc, environment, bailout_type);
 
   if ( do_log ) {
-	__ bind(&no_log);
+    __ bind(&no_log);
+  }
+}
+
+
+void LCodeGen::DeoptimizeIf(Condition cc,
+                            LEnvironment* environment,
+			    Register deopt_obj,
+			    SmallMapList* map_list) {
+  bool is_stub = info()->IsStub();
+  Deoptimizer::BailoutType bailout_type = is_stub
+      ? Deoptimizer::LAZY
+      : Deoptimizer::EAGER;
+
+  Label no_log;
+  bool do_log = (!is_stub && FLAG_trace_internals);
+
+  if ( do_log ) {
+    if ( cc != no_condition )
+      __ j(NegateCondition(cc), &no_log, Label::kNear);
+
+    // First apply for an ID for the bailout site
+    Isolate* isolate = info()->isolate();
+
+    // This ID is dynamically accumulated, not that one maintained in AST nodes
+    int ckmap_site = -1;
+    LOG_CALL_RETURN(isolate, getBailoutID(), ckmap_site);
+    int length = map_list->length();
+    LOG(isolate,
+	EmitMapEvent(Logger::GenDeoptMaps, ckmap_site, length, map_list));
+
+    TraceDeoptObject(ckmap_site, deopt_obj);
+  }
+  
+  DeoptimizeIf(cc, environment, bailout_type);
+  
+  if ( do_log ) {
+    __ bind(&no_log);
   }
 }
 
@@ -2918,6 +2977,7 @@ void LCodeGen::DoLoadContextSlot(LLoadContextSlot* instr) {
   if (instr->hydrogen()->RequiresHoleCheck()) {
     __ cmp(result, factory()->the_hole_value());
     if (instr->hydrogen()->DeoptimizesOnHole()) {
+      // TODO: log the context object access failure
       DeoptimizeIf(equal, instr->environment());
     } else {
       Label is_not_hole;
@@ -3022,9 +3082,10 @@ void LCodeGen::EmitLoadFieldOrConstantFunction(Register result,
     Heap* heap = type->GetHeap();
     while (*current != heap->null_value()) {
       __ LoadHeapObject(result, current);
-      __ cmp(FieldOperand(result, HeapObject::kMapOffset),
-                          Handle<Map>(current->map()));
-	  DeoptimizeIf(not_equal, env, result, Handle<Map>(current->map()));
+      // Prototype could be changed after the code generation
+      Handle<Map> cur_map(current->map());
+      __ cmp(FieldOperand(result, HeapObject::kMapOffset), cur_map);
+      DeoptimizeIf(not_equal, env, result, cur_map);
       current =
           Handle<HeapObject>(HeapObject::cast(current->map()->prototype()));
     }
@@ -3071,7 +3132,8 @@ void LCodeGen::DoLoadNamedFieldPolymorphic(LLoadNamedFieldPolymorphic* instr) {
   Register object = ToRegister(instr->object());
   Register result = ToRegister(instr->result());
 
-  int map_count = instr->hydrogen()->types()->length();
+  SmallMapList* map_list = instr->hydrogen()->types(); 
+  int map_count = map_list->length();
   bool need_generic = instr->hydrogen()->need_generic();
 
   if (map_count == 0 && !need_generic) {
@@ -3082,18 +3144,20 @@ void LCodeGen::DoLoadNamedFieldPolymorphic(LLoadNamedFieldPolymorphic* instr) {
   Label done;
   bool all_are_compact = true;
   for (int i = 0; i < map_count; ++i) {
-    if (!CompactEmit(instr->hydrogen()->types(), name, i, isolate())) {
+    if (!CompactEmit(map_list, name, i, isolate())) {
       all_are_compact = false;
       break;
     }
   }
+
   for (int i = 0; i < map_count; ++i) {
     bool last = (i == map_count - 1);
-    Handle<Map> map = instr->hydrogen()->types()->at(i);
+    Handle<Map> map = map_list->at(i);
     Label check_passed;
     __ CompareMap(object, map, &check_passed);
     if (last && !need_generic) {
-      DeoptimizeIf(not_equal, instr->environment(), object, map);
+      // Report the object that triggers the deoptimization
+      DeoptimizeIf(not_equal, instr->environment(), object, map_list);
       __ bind(&check_passed);
       EmitLoadFieldOrConstantFunction(
           result, object, map, name, instr->environment());
@@ -3109,6 +3173,7 @@ void LCodeGen::DoLoadNamedFieldPolymorphic(LLoadNamedFieldPolymorphic* instr) {
       __ bind(&next);
     }
   }
+  
   if (need_generic) {
     __ mov(ecx, name);
     Handle<Code> ic = isolate()->builtins()->LoadIC_Initialize();
@@ -4192,17 +4257,14 @@ void LCodeGen::DoCallNew(LCallNew* instr) {
   ASSERT(ToRegister(instr->constructor()).is(edi));
   ASSERT(ToRegister(instr->result()).is(eax));
 
-  /*if ( FLAG_trace_internals ) {
-	__ mov(ebx, Immediate((Address)isolate()->get_callnew_pair()));
-	__ mov(Operand(ebx, 0), Immediate(instr->hydrogen()->position()));
-  }*/
-
   // No cell in ebx for construct type feedback in optimized code
   Handle<Object> undefined_value(isolate()->factory()->undefined_value());
   __ mov(ebx, Immediate(undefined_value));
   CallConstructStub stub(NO_CALL_FUNCTION_FLAGS);
   __ Set(eax, Immediate(instr->arity()));
   CallCode(stub.GetCode(isolate()), RelocInfo::CONSTRUCT_CALL, instr);
+
+  // Flag_trace_internals: Newed objects are recorded
 }
 
 
@@ -4247,6 +4309,13 @@ void LCodeGen::DoCallNewArray(LCallNewArray* instr) {
   } else {
     ArrayNArgumentsConstructorStub stub(kind, context_mode, override_mode);
     CallCode(stub.GetCode(isolate()), RelocInfo::CONSTRUCT_CALL, instr);
+  }
+
+  if ( FLAG_trace_internals ) {
+    // Guess the pointer to the array is in eax, might be wrong
+    __ push(eax);
+    // Call runtime to generate log message
+    __ CallRuntime(Runtime::kLogNewArray, 1);
   }
 }
 
@@ -5781,7 +5850,7 @@ void LCodeGen::DoCheckMapCommon(Register reg,
                                 LInstruction* instr) {
   Label success;
   __ CompareMap(reg, map, &success);
-  DeoptimizeIf(not_equal, instr->environment(), reg, map);
+  DeoptimizeIf(not_equal, instr->environment());
   __ bind(&success);
 }
 
@@ -5789,17 +5858,23 @@ void LCodeGen::DoCheckMapCommon(Register reg,
 void LCodeGen::DoCheckMaps(LCheckMaps* instr) {
   LOperand* input = instr->value();
   ASSERT(input->IsRegister());
-  Register reg = ToRegister(input);
+  Register reg = ToRegister(input);   // pointer to the object being checked
 
   Label success;
   SmallMapList* map_set = instr->hydrogen()->map_set();
-  for (int i = 0; i < map_set->length() - 1; i++) {
+  int length = map_set->length();
+  
+  for (int i = 0; i < length - 1; i++) {
     Handle<Map> map = map_set->at(i);
     __ CompareMap(reg, map, &success);
     __ j(equal, &success);
   }
+
   Handle<Map> map = map_set->last();
-  DoCheckMapCommon(reg, map, instr);
+  //DoCheckMapCommon(reg, map, instr);
+  __ CompareMap(reg, map, &success);
+  DeoptimizeIf(not_equal, instr->environment(), reg, map_set);
+  
   __ bind(&success);
 }
 
@@ -5987,6 +6062,7 @@ void LCodeGen::DoCheckPrototypeMaps(LCheckPrototypeMaps* instr) {
   if (!instr->hydrogen()->CanOmitPrototypeChecks()) {
     for (int i = 0; i < prototypes->length(); i++) {
       __ LoadHeapObject(reg, prototypes->at(i));
+      // TODO: trace the failure of prototype map checks
       DoCheckMapCommon(reg, maps->at(i), instr);
     }
   }
@@ -6060,6 +6136,16 @@ void LCodeGen::DoAllocateObject(LAllocateObject* instr) {
       int property_offset = JSObject::kHeaderSize + i * kPointerSize;
       __ mov(FieldOperand(result, property_offset), scratch);
     }
+  }
+
+  if ( FLAG_trace_internals ) {
+    // The pointer of the newly generated JSObject
+    __ push(result);
+    // Obtain the constructor
+    __ LoadHeapObject(scratch, constructor);
+    __ push(scratch);
+    // Call runtime to generate log message
+    __ CallRuntime(Runtime::kLogNewObject, 2);
   }
 }
 
@@ -6564,7 +6650,7 @@ void LCodeGen::DoCheckMapValue(LCheckMapValue* instr) {
   Register object = ToRegister(instr->value());
   __ cmp(ToRegister(instr->map()),
          FieldOperand(object, HeapObject::kMapOffset));
-  DeoptimizeIf(not_equal, instr->environment(), object, Handle<Map>::null(), ToRegister(instr->map()));
+  DeoptimizeIf(not_equal, instr->environment());
 }
 
 

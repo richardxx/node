@@ -417,8 +417,9 @@ Logger::Logger(Isolate* isolate)
     epoch_(0),
     jsw_msg(NULL),
     jsw_pos(0),
-    jsw_func_info(NULL) {
-  
+    jsw_func_info(NULL),
+    ic_counters(0) {
+
 }
 
 
@@ -662,18 +663,20 @@ const char* Logger::get_closure_mark(SharedFunctionInfo* shared)
     return it->second;
   }
 
-  // This is a special function
-  if ( shared == isolate_->array_function()->shared() )
-    return "JSArray";
-  else if ( shared == isolate_->object_function()->shared() )
-    return "JSObject";
-
   // If this function is not defined in any script file, just ignore it
   Object* maybe_script = shared->script();
   if ( !maybe_script->IsScript() ) {
     (*jsw_func_info)[shared] = NULL;
     return NULL;
   }
+
+  /*
+  // This is a special function
+  if ( shared == isolate_->array_function()->shared() )
+    return "JSArray";
+  else if ( shared == isolate_->object_function()->shared() )
+    return "JSObject";
+  */
 
   Handle<Script> script(Script::cast(maybe_script));
 
@@ -820,6 +823,7 @@ JSFunction* Logger::get_events_context()
 void Logger::EmitObjectEvent(InternalEvent event, HeapObject* obj, ...)
 {
   if (!log_->IsEnabled()) return;
+  if ( !isolate_->bootstrapper()->isInitialized() ) return;
 
   JSFunction* def_function = get_events_context();  
   const char* func_desc = "Global";
@@ -1031,7 +1035,8 @@ void Logger::EmitObjectEvent(InternalEvent event, HeapObject* obj, ...)
 void Logger::EmitFunctionEvent(InternalEvent event, JSFunction* func,
 			       Code* new_code, SharedFunctionInfo* shared, ...) {
   if (!log_->IsEnabled()) return;
-  
+  if ( !isolate_->bootstrapper()->isInitialized() ) return;
+
   jsw_log("%d %x", event, func);
 
   va_list arg_ptr;
@@ -1046,17 +1051,17 @@ void Logger::EmitFunctionEvent(InternalEvent event, JSFunction* func,
 
   case GenOptCode:
   case GenOsrCode:
-	{
-	  const int kMaxOptCount =
-		(FLAG_deopt_every_n_times == 0 ? FLAG_max_opt_count : 1000) + 1;
-
-	    jsw_log(" %x %d|%d",
-		  new_code,
-		  shared->opt_count(), 
-		  kMaxOptCount ); 
-	}
-	break;
-
+    {
+      const int kMaxOptCount =
+	(FLAG_deopt_every_n_times == 0 ? FLAG_max_opt_count : 1000) + 1;
+      
+      jsw_log(" %x %d|%d",
+	      new_code,
+	      shared->opt_count(), 
+	      kMaxOptCount ); 
+    }
+    break;
+    
   case SetCode:
 	{
 	  jsw_log(" %x", new_code);
@@ -1096,17 +1101,17 @@ void Logger::EmitFunctionEvent(InternalEvent event, JSFunction* func,
 	  // Deoptimization message
 	  va_start(arg_ptr, shared);
 	  Code* old_code = va_arg(arg_ptr, Code*);
-	  HeapObject* failed_obj = va_arg(arg_ptr, HeapObject*);
-	  Map* expected_map = va_arg(arg_ptr, Map*);
+	  HeapObject* deopt_obj = va_arg(arg_ptr, HeapObject*);
+	  int ckmap_site = va_arg(arg_ptr, int);
 	  const char* add_msg = va_arg(arg_ptr, const char*);
 	  va_end(arg_ptr);
-
+	  
 	  // Perhaps sometimes we miss code generation
 	  // We also output the old code to indicate this case, :<
-	  jsw_log(" %x %x %x %x %s", 
-		old_code, new_code, 
-		failed_obj, expected_map,
-		add_msg);
+	  jsw_log(" %x %x %x %d %s", 
+		  old_code, new_code, 
+		  deopt_obj, ckmap_site,
+		  add_msg);
 	}
 	break;
 
@@ -1145,20 +1150,45 @@ void Logger::EmitFunctionEvent(InternalEvent event, JSFunction* func,
 void Logger::EmitMapEvent(InternalEvent event, ...)
 {
   if (!log_->IsEnabled()) return;
+  if ( !isolate_->bootstrapper()->isInitialized() ) return;
 
   jsw_log("%d", event);
 
   va_list arg_ptr;
   switch(event) {
   case BeginDeoptOnMap:
-	{
-	  va_start(arg_ptr, event);
-	  Map* trigger_map = va_arg(arg_ptr, Map*);
-	  va_end(arg_ptr);
-	  jsw_log(" %x", trigger_map); 
+    {
+      va_start(arg_ptr, event);
+        Map* trigger_map = va_arg(arg_ptr, Map*);
+	va_end(arg_ptr);
+      jsw_log(" %x", trigger_map); 
+    }
+    break;
+    
+  case GenDeoptMaps:
+    {
+      va_start(arg_ptr, event);
+      
+      int ckmap_site = va_arg(arg_ptr, int);
+      int map_count = va_arg(arg_ptr, int);
+      jsw_log(" %d %d", ckmap_site, map_count);
+      
+      if ( map_count < 0 ) {
+	// Followed is the single map
+	Map* map = va_arg(arg_ptr, Map*);
+	jsw_log(" %x", map);
+      }
+      else {
+	SmallMapList* map_list = va_arg(arg_ptr, SmallMapList*);
+	for ( int i = 0; i < map_count; ++i ) {
+	  jsw_log(" %x", map_list->at(i));
 	}
-	break;
-
+      }
+      
+      va_end(arg_ptr);
+    }
+    break;
+    
   default:
 	break;
   }
@@ -1170,6 +1200,7 @@ void Logger::EmitMapEvent(InternalEvent event, ...)
 void Logger::EmitGCMoveEvent(HeapObject* from, HeapObject* to)
 {
   if (!log_->IsEnabled()) return;
+  if ( !isolate_->bootstrapper()->isInitialized() ) return;
 
   InternalEvent event = ForDebug;
 
@@ -1205,6 +1236,7 @@ void Logger::EmitGCMoveEvent(HeapObject* from, HeapObject* to)
 void Logger::EmitSysEvent(InternalEvent event, ...)
 {
   if (!log_->IsEnabled()) return;
+  if ( !isolate_->bootstrapper()->isInitialized() ) return;
 
   //LogMessageBuilder msg(this);
   jsw_log("%d", event);
@@ -1229,6 +1261,15 @@ void Logger::EmitSysEvent(InternalEvent event, ...)
   }
 
   jsw_log('\n');
+}
+
+
+int Logger::getBailoutID()
+{
+  log_->mutex_->Lock();
+  int id = ic_counters++;
+  log_->mutex_->Unlock();
+  return id;
 }
 
 

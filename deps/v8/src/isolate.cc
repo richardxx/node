@@ -1927,8 +1927,8 @@ void Isolate::Deinit() {
     delete cpu_profiler_;
     cpu_profiler_ = NULL;
 
-	delete[] opt_code_fail_pair_;
-	delete[] callnew_pair_;
+    delete jsw_deopt_pack_;
+
     // The default isolate is re-initializable due to legacy API.
     state_ = UNINITIALIZED;
   }
@@ -2182,12 +2182,9 @@ bool Isolate::Init(Deserializer* des) {
   cpu_profiler_ = new CpuProfiler(this);
   heap_profiler_ = new HeapProfiler(heap());
 
-  // Xiao's extension
-  opt_code_fail_pair_ = new HeapObject*[2];
-  opt_code_fail_pair_[0] = opt_code_fail_pair_[1] = NULL;
-  callnew_pair_ = new HeapObject*[2];
-  callnew_pair_[0] = callnew_pair_[1] = NULL;
-  //PrintF("%p %p\n", opt_code_fail_pair_, callnew_pair_);
+  // For tracing internal events
+  jsw_deopt_pack_ = new jswDeoptPack;
+  //PrintF("%x\n", jsw_deopt_pack_);
 
   // Enable logging before setting up the heap
   logger_->SetUp(this);
@@ -2340,7 +2337,6 @@ bool Isolate::Init(Deserializer* des) {
   }
 
   initialized_from_snapshot_ = (des != NULL);
-
   return true;
 }
 

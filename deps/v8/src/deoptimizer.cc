@@ -708,7 +708,7 @@ int Deoptimizer::GetDeoptimizedCodeCount(Isolate* isolate) {
 // without having a real stack frame in place.
 void Deoptimizer::DoComputeOutputFrames() {
   if (bailout_type_ == OSR) {
-	// This is not deoptimization, but optimization
+    // This is not deoptimization, but optimization
     DoComputeOsrOutputFrame();
     return;
   }
@@ -819,32 +819,34 @@ void Deoptimizer::DoComputeOutputFrames() {
            ms);
   }
 
-  // We log deoptimization events before going on
-  if ( FLAG_trace_internals &&
+  // We log the deoptimization event
+  if ( FLAG_trace_internals && 
        function_->IsJSFunction() ) {
     // function_ may be a SMI, which indicates a builtin function
-    SharedFunctionInfo* shared = function_->shared();
-    Code* code = shared->code();
-    HeapObject** deopt_roots = isolate()->get_opt_code_fail_pair();
-    char buf[48];
-    sprintf(buf, "%s@%d", MessageFor(bailout_type_), bailout_id_);
+    Isolate::jswDeoptPack* pack = isolate()->get_jsw_deopt_pack();
+    HeapObject* deopt_func = pack->function;
     
-    // We supplement the decription of the recorded target
-    /*HeapObject* obj = HeapObject::cast(deopt_roots[0]);
-      Map* exp_map = Map::cast(deopt_roots[1]);*/
+    if ( function_ == deopt_func ) {
+      // In case the race of multithreads, the recorded information can be broken
+      // We only output the deopt information that is not interleaved
+      HeapObject* deopt_obj = pack->object;
+      int ckmap_site = pack->ckmap_site;
+      SharedFunctionInfo* shared = function_->shared();
+      Code* code = shared->code();
+      char buf[48];
+      sprintf(buf, "%s@%d", MessageFor(bailout_type_), bailout_id_);
     
-    LOG(isolate(),
-	EmitFunctionEvent(
-			  Logger::RegularDeopt,
-			  function_,
-			  code,
-			  shared, 
-			  compiled_code_, 
-			  deopt_roots[0], deopt_roots[1], 
-			  buf )
-	);
-    
-    //deopt_roots[0] = deopt_roots[1] = NULL;
+      LOG(isolate(),
+	  EmitFunctionEvent(
+			    Logger::RegularDeopt,
+			    function_,
+			    code,
+			    shared, 
+			    compiled_code_, 
+			    deopt_obj, ckmap_site, 
+			    buf )
+	  );
+    }
   }
 }
 

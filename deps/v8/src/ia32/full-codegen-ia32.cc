@@ -1588,6 +1588,7 @@ void FullCodeGenerator::VisitObjectLiteral(ObjectLiteral* expr) {
       ? ObjectLiteral::kHasFunction
       : ObjectLiteral::kNoFlags;
   int properties_count = constant_properties->length() / 2;
+  bool log_creation = false;
   if ((FLAG_track_double_fields && expr->may_store_doubles()) ||
       expr->depth() > 1) {
     __ mov(edi, Operand(ebp, JavaScriptFrameConstants::kFunctionOffset));
@@ -1596,7 +1597,7 @@ void FullCodeGenerator::VisitObjectLiteral(ObjectLiteral* expr) {
     __ push(Immediate(constant_properties));
     __ push(Immediate(Smi::FromInt(flags)));
     __ CallRuntime(Runtime::kCreateObjectLiteral, 4);
-  } if (FLAG_trace_internals || Serializer::enabled() || flags != ObjectLiteral::kFastElements ||
+  } else if (Serializer::enabled() || flags != ObjectLiteral::kFastElements ||
       properties_count > FastCloneShallowObjectStub::kMaximumClonedProperties) {
     __ mov(edi, Operand(ebp, JavaScriptFrameConstants::kFunctionOffset));
     __ push(FieldOperand(edi, JSFunction::kLiteralsOffset));
@@ -1612,30 +1613,30 @@ void FullCodeGenerator::VisitObjectLiteral(ObjectLiteral* expr) {
     __ mov(edx, Immediate(Smi::FromInt(flags)));
     FastCloneShallowObjectStub stub(properties_count);
     __ CallStub(&stub);
+    log_creation = true;
   }
 
-  // If result_saved is true the result is on top of the stack.  If
-  // result_saved is false the result is in eax.
+  // If result_saved is true the result is on top of the stack, otherwise in eax.
   bool result_saved = false;
 
   // We log the information before unkonwn operations change eax
-  if ( FLAG_trace_internals ) {
-	// We first keep a copy of object information
-	__ push(eax);
-	result_saved = true;
-
-	// The pointer of newly generated JSObject is stored in eax
-	__ push(eax);
-	// Obtain the enclosing function
-	__ mov(ebx, Operand(ebp, JavaScriptFrameConstants::kFunctionOffset));
-	__ push(ebx);
-	// Push the index of boilerplate
-	__ push(Immediate(Smi::FromInt(expr->literal_index())));
-
-	// Call runtime to generate log message
-	__ CallRuntime(Runtime::kLogObjectCreate, 3);
+  if ( FLAG_trace_internals && log_creation ) {
+    // We first keep a copy of object information
+    __ push(eax);
+    result_saved = true;
+    
+    // The pointer of newly generated JSObject is stored in eax
+    __ push(eax);
+    // Obtain the enclosing function
+    __ mov(ebx, Operand(ebp, JavaScriptFrameConstants::kFunctionOffset));
+    __ push(ebx);
+    // Push the index of boilerplate
+    __ push(Immediate(Smi::FromInt(expr->literal_index())));
+    
+    // Call runtime to generate log message
+    __ CallRuntime(Runtime::kLogObjectCreate, 3);
   }
-
+  
   // Mark all computed expressions that are bound to a key that
   // is shadowed by a later occurrence of the same key. For the
   // marked expressions, no store code is emitted.
@@ -1742,7 +1743,8 @@ void FullCodeGenerator::VisitArrayLiteral(ArrayLiteral* expr) {
       IsFastObjectElementsKind(constant_elements_kind);
   Handle<FixedArrayBase> constant_elements_values(
       FixedArrayBase::cast(constant_elements->get(1)));
-
+  
+  bool log_creation = false;
   Heap* heap = isolate()->heap();
   if (has_constant_fast_elements &&
       constant_elements_values->map() == heap->fixed_cow_array_map()) {
@@ -1758,13 +1760,14 @@ void FullCodeGenerator::VisitArrayLiteral(ArrayLiteral* expr) {
         DONT_TRACK_ALLOCATION_SITE,
         length);
     __ CallStub(&stub);
+    log_creation = true;
   } else if (expr->depth() > 1) {
     __ mov(ebx, Operand(ebp, JavaScriptFrameConstants::kFunctionOffset));
     __ push(FieldOperand(ebx, JSFunction::kLiteralsOffset));
     __ push(Immediate(Smi::FromInt(expr->literal_index())));
     __ push(Immediate(constant_elements));
     __ CallRuntime(Runtime::kCreateArrayLiteral, 3);
-  } if (FLAG_trace_internals || Serializer::enabled() ||
+  } else if (Serializer::enabled() ||
       length > FastCloneShallowArrayStub::kMaximumClonedLength) {
     __ mov(ebx, Operand(ebp, JavaScriptFrameConstants::kFunctionOffset));
     __ push(FieldOperand(ebx, JSFunction::kLiteralsOffset));
@@ -1793,27 +1796,28 @@ void FullCodeGenerator::VisitArrayLiteral(ArrayLiteral* expr) {
     __ mov(ecx, Immediate(constant_elements));
     FastCloneShallowArrayStub stub(mode, allocation_site_mode, length);
     __ CallStub(&stub);
+    log_creation = true;
   }
 
   bool result_saved = false;  // Is the result saved to the stack?
 
   // We log the information before unkonwn operations change eax
-  if ( FLAG_trace_internals ) {
-	// We first keep a copy of array information
-	__ push(eax);
+  if ( FLAG_trace_internals && log_creation ) {
+    // We first keep a copy of array information
+    __ push(eax);
     __ push(Immediate(Smi::FromInt(expr->literal_index())));
     result_saved = true;
 
-	// The pointer of newly generated JSArray is stored in eax
-	__ push(eax);
-	// Obtain the enclosing function
-	__ mov(ebx, Operand(ebp, JavaScriptFrameConstants::kFunctionOffset));
-	__ push(ebx);
-	// Push the index of boilerplate
-	__ push(Immediate(Smi::FromInt(expr->literal_index())));
-
-	// Call runtime to generate log message
-	__ CallRuntime(Runtime::kLogObjectCreate, 3);
+    // The pointer of newly generated JSArray is stored in eax
+    __ push(eax);
+    // Obtain the enclosing function
+    __ mov(ebx, Operand(ebp, JavaScriptFrameConstants::kFunctionOffset));
+    __ push(ebx);
+    // Push the index of boilerplate
+    __ push(Immediate(Smi::FromInt(expr->literal_index())));
+    
+    // Call runtime to generate log message
+    __ CallRuntime(Runtime::kLogObjectCreate, 3);
   }
 
   // Emit code to evaluate all the non-constant subexpressions and to store
