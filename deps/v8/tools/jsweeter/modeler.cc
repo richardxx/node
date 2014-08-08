@@ -70,6 +70,9 @@ static map<int, InstanceDescriptor*> instances[StateMachine::MCount];
 // For deferred inference
 static map<int, DeoptPack*> deferred_objs;
 
+// Recording the maps at the map check site
+static map<int, MapList*> map_lists;
+
 // Internal id counters
 static int id_counter[StateMachine::MCount];
 static int sig_for_hidden[StateMachine::MCount];
@@ -722,23 +725,20 @@ static void
 regular_deopt(FILE* file)
 {
   int f_addr, old_code, new_code;
-  int failed_obj, exp_map_id, bailout_id;
-  char deopt_buf[ON_STACK_NAME_SIZE];
+  int failed_obj, ckmap_site, bailout_id;
+  char msg[ON_STACK_NAME_SIZE];
 
-  fscanf( file, "%x %x %x %x %x %[^\t\n]",
+  fscanf( file, "%x %x %x %x %d %[^\t\n]",
 	  &f_addr,
-	  &old_code,
-	  &new_code,
-	  &failed_obj, &exp_map_id,
-	  deopt_buf );
-
+	  &old_code, &new_code,
+	  &failed_obj, &ckmap_site,
+	  msg );
+  
   // We first model this transition
-  Transition* trans = do_deopt_common(f_addr, old_code, new_code, deopt_buf);
-  if ( trans == NULL ) return;
-
-  // Infer
-  if ( !do_analyze ) return;
-
+  Transition* trans = do_deopt_common(f_addr, old_code, new_code, msg);
+  if ( trans == NULL ||
+       !do_analyze ) return;
+  
   // We don't process the soft deopts
   if ( strncmp( deopt_buf, "soft", 4 ) == 0 ) {
     return;
@@ -756,8 +756,9 @@ regular_deopt(FILE* file)
   }
 
   // Check
-  DeoptPack deopt_pack(failed_obj, exp_map_id, funcM, bailout_id);
-  ObjectMachine* osm = check_deoptimization(deopt_pack);
+  MapList* list = map_lists[ckmap_site];
+  DeoptPack deopt_pack(failed_obj, list, funcM, bailout_id);
+  ObjectMachine* osm = check_deopt(deopt_pack);
 
   if ( osm == NULL ) {
     // Cache this object
@@ -821,6 +822,24 @@ begin_deopt_on_map(FILE* file)
   // Map change can result in code deoptimization
   Map* map_d = find_map(map_id);
   register_map_notifier(map_d);
+}
+
+static void
+gen_deopt_maps(FILE* file)
+{
+  int ckmap_site, map_count;
+  int map_id;
+
+  fscanf( "%d %d", &ckmap_site, &map_count );
+  MapList* list = new MapList;
+
+  for ( int i = 0; i < map_count; ++i ) {
+    fscanf( "%x", &map_id );
+    Map* map_d = find_map(map_id);
+    list->push_back(map_d);
+  }
+
+  map_lists[ckmap_site] = list;
 }
 
 

@@ -21,14 +21,14 @@ enum FixType {
 struct DeoptPack
 {
   int failed_obj;
-  int exp_mapID;
+  MapList* map_list;
   FunctionMachine* deopt_f;
   int bailout_id;
   
-  DeoptPack(int fo, int em, FunctionMachine* fm, int id)
+  DeoptPack(int fo, MapList* list, FunctionMachine* fm, int id)
   {
     failed_obj = fo;
-    exp_mapID = em;
+    map_list = list;
     deopt_f = fm;
     bailout_id = id;
   }
@@ -36,15 +36,14 @@ struct DeoptPack
   DeoptPack( const DeoptPack& other )
   {
     failed_obj = other.failed_obj;
-    exp_mapID = other.exp_mapID;
+    map_list = other.map_list;
     deopt_f = other.deopt_f;
     bailout_id = other.bailout_id;
   }
 };
 
 
-ObjectMachine*
-check_deoptimization(struct DeoptPack&);
+ObjectMachine* check_deopt(struct DeoptPack&);
 
 
 #endif

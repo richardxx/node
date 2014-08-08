@@ -21,9 +21,9 @@ Map::update_map(int new_id)
   all_maps.erase(map_id);
   all_maps[new_id] = this;
 
-  // Now we change the map id to new id                                                                                                                                                
+  // Now we change the map id to new id                                         
   map_id = new_id;
-
+  
   /*
   // Update states record for machines use this map
   RefSet::iterator it = used_by.begin();

@@ -41,7 +41,8 @@
 
 
 #define MAP_EVENTS_LIST(V)				\
-  V(BeginDeoptOnMap,      begin_deopt_on_map)		
+  V(BeginDeoptOnMap,      begin_deopt_on_map)		\
+  V(GenDeoptMaps,         gen_deopt_maps)
 
 
 #define SYS_EVENTS_LIST(V)				\
