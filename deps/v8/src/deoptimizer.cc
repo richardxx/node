@@ -824,9 +824,9 @@ void Deoptimizer::DoComputeOutputFrames() {
        function_->IsJSFunction() ) {
     // function_ may be a SMI, which indicates a builtin function
     Isolate::jswDeoptPack* pack = isolate()->get_jsw_deopt_pack();
-    HeapObject* deopt_func = pack->function;
-    
-    if ( function_ == deopt_func ) {
+    //HeapObject* deopt_func = pack->function;
+    //PrintF( "Deopt = %p, func = %p, current = %p, obj = %p, cksite = %d\n", pack, deopt_func, function_, pack->object, pack->ckmap_site );
+    //if ( function_ == deopt_func ) {
       // In case the race of multithreads, the recorded information can be broken
       // We only output the deopt information that is not interleaved
       HeapObject* deopt_obj = pack->object;
@@ -846,7 +846,7 @@ void Deoptimizer::DoComputeOutputFrames() {
 			    deopt_obj, ckmap_site, 
 			    buf )
 	  );
-    }
+      //}
   }
 }
 

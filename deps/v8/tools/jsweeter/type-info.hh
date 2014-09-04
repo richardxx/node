@@ -1,38 +1,42 @@
 // Describe the type and code
-// richardxx, 2014
+// richardxx, 2014.3
 
 
 #ifndef TYPE_INFO_H
 #define TYPE_INFO_H
 
-#include "automata.hh"
-//class State;
-//class FunctionMachine;
+#include <vector>
+#include "jsweeter.hh"
+
+using std::vector;
 
 class CoreInfo
 {
  public:
-  typedef std::vector<State*> RefSet;
+  typedef vector<State*> RefSet;
   
  public:
   // Map: Map/Code -> States
   RefSet used_by;
   
  public:
-  CoreInfo() { }
-
+ 
   // Add a mapping to the used_by container
-  void add_usage(State* user_s) {
+  virtual void add_usage(State* user_s) {
     used_by.push_back(user_s);
   }
-
-  void remove_usage(State* user_s) {
+  
+  virtual void remove_usage(State* user_s) {
+    int size = used_by.size();
+    int i = 0;
     
+    while ( i < size && used_by[i] != user_s ) ++i;
+    if ( i < size ) used_by.erase(used_by.begin() + i);
   }
 };
 
 
-// Map is type in V8
+// Map is name for type descriptor in V8
 class Map : public CoreInfo
 {
 public:
@@ -51,9 +55,33 @@ public:
     return map_id; 
   }
 
-  State* to_state() {
+  bool has_bound() { return used_by.size() > 0; }
+
+  State* to_state() 
+  {
     // A map is uniquely used by a state
     return used_by[0];
+  }
+
+  void add_usage(State* user_s) 
+  {
+    if ( has_bound() ) {
+      used_by[0] = user_s;
+    }
+    else {
+      CoreInfo::add_usage(user_s);
+    }
+  }
+  
+  void remove_usage(State* user_s)
+  {
+    if ( has_bound() &&
+	 used_by[0] == user_s ) {
+      used_by.pop_back();
+    }
+    else {
+      CoreInfo::remove_usage(user_s);
+    }
   }
   
 public:
@@ -63,7 +91,7 @@ public:
   void add_dep(FunctionMachine*);
 
   // Deoptimize the functions depending on this map immediately
-  void deopt_deps(Transition* trans);
+  void deopt_deps(TransPacket* tp);
   
 private:
   // The set of functions that deopted on this map
@@ -108,9 +136,14 @@ extern Code* null_code;
 Map* 
 find_map(int new_map, bool create=true);
 
+bool
+update_map( int old_id, int new_id );
+
 // Find or create a code structure
 Code* 
 find_code(int new_code, bool create=true);
 
+bool
+update_code( int old_id, int new_id );
 
 #endif

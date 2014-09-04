@@ -2184,7 +2184,7 @@ bool Isolate::Init(Deserializer* des) {
 
   // For tracing internal events
   jsw_deopt_pack_ = new jswDeoptPack;
-  //PrintF("%x\n", jsw_deopt_pack_);
+  //PrintF("deopt pack = %p\n", jsw_deopt_pack_);
 
   // Enable logging before setting up the heap
   logger_->SetUp(this);

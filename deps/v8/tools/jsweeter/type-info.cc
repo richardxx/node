@@ -23,29 +23,6 @@ Map::update_map(int new_id)
 
   // Now we change the map id to new id                                         
   map_id = new_id;
-  
-  /*
-  // Update states record for machines use this map
-  RefSet::iterator it = used_by.begin();
-  RefSet::iterator end = used_by.end();
-
-  for ( ; it != end; ++it ) {
-    State* s = *it;
-    StateMachine *sm = s->machine;
-    sm->delete_state(s);
-  }
-
-  // Now we change the map id to new id
-  map_id = new_id;
-  
-  // We add the states back their machines
-  it = used_by.begin();
-  for ( ; it != end; ++it ) {
-    State* s = *it;
-    StateMachine *sm = s->machine;
-    sm->add_state(s);
-  }
-  */
 }
 
 
@@ -57,45 +34,43 @@ Map::add_dep(FunctionMachine* fsm)
 
 
 void 
-Map::deopt_deps(Transition* trans)
+Map::deopt_deps(TransPacket* tp)
 {
-  vector<FunctionMachine*>::iterator it_funcs;
-
   if ( dep_funcs.size() == 0 ) return;
   
   printf( "Forced to deoptimize:\n" );
 
-  if ( trans != NULL ) {
-    TransPacket* tp = trans->last_;
+  if ( tp != NULL ) {
+    stringstream action;
+    tp->describe(action);
+
+    Transition *trans = tp->trans;
     StateMachine* trigger_obj = trans->source->machine;
-    
-    string def_func_name;
-    if ( tp->context != NULL )
-      def_func_name = tp->context->toString();
-    else
-      def_func_name = "global";
-    
-    string &action = tp->reason;
     string obj_name = trigger_obj->toString();
     
-    printf( "\tIn <%s>: %s [%s]\n",
-	    def_func_name.c_str(),
-	    action.c_str(),
-	    obj_name.c_str() );
+    printf( "\tObj=<%s>, Action=%s\n",
+	    obj_name.c_str(),
+	    action.str().c_str() );
   }
   else {
     printf( "\t(?)\n" );
   }
 
-  printf( "\t===>\n" );
+  printf( "\t===========>\n" );
   
   // Iterate the deoptimized functions
-  for ( it_funcs = dep_funcs.begin();
-	it_funcs != dep_funcs.end(); ++it_funcs ) {
-    FunctionMachine* fm = *it_funcs;
-    string fm_name = fm->toString();
-    
-    printf( "\t [%s]\n", fm_name.c_str() );
+  int size = dep_funcs.size();
+  FunctionMachine* last = dep_funcs[0];
+ 
+  for ( int i = 1, j = 0; i <= size; ++i ) {
+    FunctionMachine* fm = NULL;
+    if ( i == size ||
+	 (fm=dep_funcs[i]) != last ) {
+      string last_name = last->toString();
+      printf( "\t %s (X %d)\n", last_name.c_str(), i - j);
+      last = fm;
+      j = i;
+    }
   }
   
   printf( "\n" );
@@ -136,6 +111,19 @@ find_map(int new_map, bool create)
 }
 
 
+bool
+update_map( int old_id, int new_id )
+{
+  map<int, Map*>::iterator it = all_maps.find(old_id);
+  if ( it != all_maps.end() ) {
+    all_maps[new_id] = it->second;
+    all_maps.erase(it);
+    return true;
+  }
+  return false;
+}
+
+
 Code* 
 find_code(int new_code, bool create)
 {
@@ -154,4 +142,14 @@ find_code(int new_code, bool create)
   return res;
 }
 
-
+bool
+update_code( int old_id, int new_id )
+{
+  map<int, Code*>::iterator it = all_codes.find(old_id);
+  if ( it != all_codes.end() ) {
+    all_codes[new_id] = it->second;
+    all_codes.erase(it);
+    return true;
+  }
+  return false;
+}

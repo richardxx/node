@@ -3551,8 +3551,6 @@ MaybeObject* Heap::AllocateSharedFunctionInfo(Object* name) {
   if (!maybe->To<SharedFunctionInfo>(&share)) return maybe;
 
   // Set pointer fields.
-  /*if ( FLAG_trace_internals)
-    PrintF( "Create Function = %s\n", (*String::cast(name)->ToCString()) );*/
   share->set_name(name);
   Code* illegal = isolate_->builtins()->builtin(Builtins::kIllegal);
   share->set_code(illegal);
@@ -4288,7 +4286,7 @@ MaybeObject* Heap::AllocateFunction(Map* function_map,
 
   if ( FLAG_trace_internals ) {
     LOG(isolate(),
-	EmitObjectEvent(Logger::CreateFunction, JSFunction::cast(result), shared));
+	EmitFunctionEvent(Logger::CreateFunction, JSFunction::cast(result), shared->code(), shared));
   }
   
   return result;
@@ -4513,7 +4511,7 @@ MaybeObject* Heap::AllocateJSObject(JSFunction* constructor,
   // Allocate the initial map if absent.
   if (!constructor->has_initial_map()) {
     Object* initial_map;
-    { MaybeObject* maybe_initial_map = AllocateInitialMap(constructor);
+     { MaybeObject* maybe_initial_map = AllocateInitialMap(constructor);
       if (!maybe_initial_map->ToObject(&initial_map)) return maybe_initial_map;
     }
     constructor->set_initial_map(Map::cast(initial_map));
@@ -4855,6 +4853,12 @@ MaybeObject* Heap::AllocateGlobalObject(JSFunction* constructor) {
   // Make sure result is a global object with properties in dictionary.
   ASSERT(global->IsGlobalObject());
   ASSERT(!global->HasFastProperties());
+  
+  if ( FLAG_trace_internals ) {
+    LOG(isolate(),
+	EmitObjectEvent(Logger::CreateNewObject, global, constructor));
+  }
+
   return global;
 }
 
@@ -4928,8 +4932,8 @@ MaybeObject* Heap::CopyJSObject(JSObject* source) {
     JSObject::cast(clone)->set_properties(FixedArray::cast(prop), wb_mode);
   }
 
-  /*LOG_INTERNAL_EVENT(isolate_, 
-	EmitObjectEvent(Logger::CopyObject, JSObject::cast(clone), source));*/
+  LOG_INTERNAL_EVENT(isolate_, 
+	EmitObjectEvent(Logger::CopyObject, JSObject::cast(clone), source));
 
   // Return the new clone.
   return clone;
@@ -5038,6 +5042,10 @@ MaybeObject* Heap::CopyJSObjectWithAllocationSite(JSObject* source) {
     }
     JSObject::cast(clone)->set_properties(FixedArray::cast(prop), wb_mode);
   }
+
+  LOG_INTERNAL_EVENT(isolate_, 
+	EmitObjectEvent(Logger::CopyObject, JSObject::cast(clone), source));
+
   // Return the new clone.
   return clone;
 }
@@ -5426,7 +5434,7 @@ MaybeObject* Heap::AllocateJSArray(
     if ( result->To(&array) ) {
       LOG(isolate(),
 	  EmitObjectEvent( Logger::CreateNewArray,
-			   JSObject::cast(array), array_function)
+			   JSArray::cast(array), array_function)
 	  );
     }
   }
@@ -5458,7 +5466,7 @@ MaybeObject* Heap::AllocateJSArrayWithAllocationSite(
     if ( result->To(&array) ) {
       LOG(isolate(),
 	  EmitObjectEvent( Logger::CreateNewArray,
-			   JSObject::cast(array), array_function)
+			   JSArray::cast(array), array_function)
 	  );
     }
   }
@@ -5831,7 +5839,7 @@ MaybeObject* Heap::AllocateFunctionContext(int length, JSFunction* function) {
   context->set_extension(Smi::FromInt(0));
   context->set_global_object(function->context()->global_object());
 
-  //LOG_INTERNAL_EVENT(isolate(), EmitObjectEvent(Logger::CreateContext, context));
+  LOG_INTERNAL_EVENT(isolate(), EmitObjectEvent(Logger::CreateContext, context, function));
   return context;
 }
 

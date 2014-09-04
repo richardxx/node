@@ -7,4 +7,4 @@ then
     mode="$1"
 fi
 
-make -j8 ia32."$mode" disassembler=on #snapshot=off 
+make -j8 ia32."$mode" disassembler=on snapshot=off objectprint=on

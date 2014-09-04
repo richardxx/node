@@ -3,7 +3,10 @@
 
 #include <queue>
 #include <climits>
+#include <cassert>
+#include <cstring>
 #include "options.h"
+#include "events.h"
 #include "automata.hh"
 
 using namespace std;
@@ -12,72 +15,117 @@ using namespace std;
 static ObjectState temp_o;
 static FunctionState temp_f;
 
-static Map* start_map = new Map(INT_MAX);
-static Map* hole_map = new Map(INT_MAX-1);
-static Code* start_code = new Code(INT_MAX);
+Map* StateMachine::start_map = new Map(INT_MAX);
+Code* StateMachine::start_code = new Code(INT_MAX);
+int StateMachine::id_counter = 0;
+
+State*
+InstanceDescriptor::location()
+{ 
+  return sm->find_instance(id); 
+}
+
+bool
+InstanceDescriptor::has_history_state(State* his_s)
+{
+  State* cur_s = location();
+  if ( cur_s == NULL ) return -1;
+
+  State* q0 = sm->start;
+
+  while ( cur_s != his_s && cur_s != q0 ) {
+    cur_s = cur_s->parent_link->source;
+  }
+
+  return cur_s == his_s;
+}
+
+
+bool
+InstanceDescriptor::has_history_map(Map* his_map)
+{
+  State* his_s = his_map->to_state();
+  return has_history_state(his_s);
+}
 
 
 TransPacket::TransPacket()
 {
   trans = NULL;
   reason.clear();
+  contexts.clear();
   cost = 0;
-  context = NULL;
   count = 0;
 }
 
-
-TransPacket::TransPacket(const char* desc)
+TransPacket::TransPacket(const char* desc, vector<StateMachine*>& ctxts_, int c)
 {
   trans = NULL;
-  reason.assign(desc);
-  cost = 0;
-  context = NULL;
+  reason = desc;
+  contexts = ctxts_;
+  cost = c;
   count = 0;
-}
-
-
-TransPacket::TransPacket(const char* desc, int c_)
-{
-  trans = NULL;
-  reason.assign(desc);
-  cost = c_;
-  context = NULL;
-  count = 0;
-}
-
-
-bool TransPacket::has_reason()
-{
-  return reason.size() != 0;
 }
 
   
-void TransPacket::describe(stringstream& ss) const
+bool
+TransPacket::describe(stringstream& ss, bool prt_lib) const
 {
-  //if ( count > 1 ) ss << count;
-
-  ss << "(";
-  if ( context != NULL ) {
-    ss << context->toString(true);
-    ss << ", ";
+  int size = contexts.size();
+  
+  if ( !prt_lib ) {
+    // We test if the immediate context is in the lib
+    StateMachine* context = contexts[0];
+    if ( context->is_in_lib() ) return false;
   }
-  ss << reason << ")";
+  
+  ss << "(";
+  for ( int i = size - 1; i > -1; --i ) {
+    StateMachine* context = contexts[i];
+    if ( i < size-1 ) ss << "-->";
+    ss << context->toString(false);
+  }
+  ss << ", " << reason << ")";
+
+  return true;
 }
 
 
-bool TransPacket::operator<(const TransPacket& rhs) const
+TransPacket& 
+TransPacket::operator=(const TransPacket& rhs)
 {
-  return reason < rhs.reason;
-}
-
-
-TransPacket& TransPacket::operator=(const TransPacket& rhs)
-{
+  trans = rhs.trans;
   reason = rhs.reason;
   cost = rhs.cost;
-  context = rhs.context;
+  contexts = rhs.contexts;
+  count = rhs.count;
   return *this;
+}
+
+
+bool 
+TransPacket::operator<(const TransPacket& rhs) const
+{
+  // Compare their reasons first
+  int d = reason.compare(rhs.reason);
+
+  if ( d == 0 ) {
+    // They are the same, compare the contexts
+    int size1 = contexts.size();
+    int size2 = rhs.contexts.size();
+    if ( size1 != size2 ) return size1 < size2;
+    
+    for ( int i = 0; i < size1; ++i ) {
+      StateMachine* ctxt1 = contexts[i];
+      StateMachine* ctxt2 = rhs.contexts[i];
+      if ( ctxt1 != ctxt2 ) return ctxt1->id < ctxt2->id;
+    }
+    
+    // They are the same!
+    return false;
+  }
+  
+  return d < 0;
 }
 
 
@@ -85,7 +133,6 @@ Transition::Transition()
 {
   source = NULL;
   target = NULL;
-  last_ = NULL;
 }
 
 
@@ -93,52 +140,70 @@ Transition::Transition(State* s_, State* t_)
 {
   source = s_;
   target = t_;
-  last_ = NULL;
 }
 
 
-void 
-Transition::insert_reason(const char* r, int cost)
+TransPacket*
+Transition::reason_begin_with(const char* r)
 {
-  TransPacket *tp = new TransPacket(r, cost);
+  TpSet::iterator it = triggers.begin();
+  TpSet::iterator end = triggers.end();
+
+  while ( it != end ) {
+    TransPacket *tp = *it;
+    if ( tp->reason.find(r) != string::npos )
+      return tp;
+    ++it;
+  }
+
+  return NULL;
+}
+
+
+bool
+Transition::reason_other_than(const char* r)
+{
+  TpSet::iterator it = triggers.begin();
+  TpSet::iterator end = triggers.end();
   
-  TpSet::iterator it = triggers.find(tp);
-  if ( it != triggers.end() ) {
-    delete tp;
-    TransPacket* old_tp = *it;
-    // It does not invalidate the order in triggers
-    old_tp->cost += cost;
-    tp = old_tp;
-  }
-  else {
-    triggers.insert(tp);
+  while ( it != end ) {
+    TransPacket *tp = *it;
+    if ( tp->reason.find(r) != string::npos ) return true;
+    ++it;
   }
 
-  tp->trans = this;
-  tp->count++;
-  last_ = tp;
+  return false;
 }
 
 
-void Transition::insert_reason(TransPacket* tp)
+TransPacket*
+Transition::insert_reason(const char* r, vector<StateMachine*> &contexts, int cost)
+{
+  TransPacket finder(r, contexts, cost);
+  return insert_reason(&finder);
+}
+
+
+// The caller takes care of the memory of tp
+TransPacket*
+Transition::insert_reason(TransPacket* tp)
 {
   TpSet::iterator it = triggers.find(tp);
-
+  
   if ( it != triggers.end() ) {
     TransPacket* old_tp = *it;
     old_tp->cost += tp->cost;
     tp = old_tp;
   }
   else {
-    TransPacket *new_tp = new TransPacket;
-    *new_tp = *tp;
+    TransPacket *new_tp = new TransPacket(*tp);
     tp = new_tp;
     triggers.insert(tp);
   }
   
   tp->trans = this;
   tp->count++;
-  last_ = tp;
+  return tp;
 }
 
 
@@ -147,6 +212,7 @@ Transition::merge_reasons(string& final, bool extra_newline)
 {
   int i = 0;
   int cost = 0;
+  bool prt_plus = false;
   stringstream ss;
   
   TpSet::iterator it = triggers.begin();
@@ -154,14 +220,19 @@ Transition::merge_reasons(string& final, bool extra_newline)
 
   for ( ; it != end; ++it ) {
     if ( i >= 30 ) break;
-    if ( i > 0 ) {
-      ss << "+";
+    if ( prt_plus ) {
+      ss << " + ";
       if ( extra_newline ) ss << "\\n";
     }
     TransPacket* tp = *it;
-    tp->describe(ss);
-    cost += tp->cost;
-    ++i;
+    if ( tp->describe(ss, false) ) {
+      cost += tp->cost;
+      prt_plus = true;
+      ++i;
+    }
+    else {
+      prt_plus = false;
+    }
   }
   
   if ( it != end ) {
@@ -190,20 +261,6 @@ Transition::graphviz_style()
 }
 
 
-SummaryTransition::SummaryTransition()
-  : Transition()
-{
-  exit = NULL;
-}
-
-
-SummaryTransition::SummaryTransition( State* s_, State* t_, State* exit_ )
-  : Transition(s_,t_)
-{
-  exit = exit_;
-}
-
-
 // const char* 
 // SummaryTransition::graphviz_style()
 // {
@@ -214,19 +271,11 @@ SummaryTransition::SummaryTransition( State* s_, State* t_, State* exit_ )
 State::State() 
 {
   id = -1;
+  depth = 0x6fffffff;
   parent_link = NULL;
-  is_missing = false;
   machine = NULL;
   out_edges.clear();
 }
-
-
-int 
-State::size() 
-{ 
-  return out_edges.size(); 
-}
-
 
 Transition* 
 State::find_transition( State* next_s, bool by_boilerplate )
@@ -239,38 +288,8 @@ State::find_transition( State* next_s, bool by_boilerplate )
   return ans;
 }
 
-
 Transition* 
-State::add_transition( State* next_s )
-{
-  Transition* trans = new Transition(this, next_s);
-  out_edges[next_s] = trans;
-
-  if ( next_s->parent_link == NULL ) {
-    // We can make a loop if this object is in slow mode
-    // We only keep the link to the immediate dominator
-    next_s->parent_link = trans;
-  }
-
-  return trans;
-}
-
-
-Transition* 
-State::add_summary_transition( State* next_s, State* exit_s )
-{
-  Transition* trans = new SummaryTransition(this, next_s, exit_s);
-  out_edges[next_s] = trans;
-
-  if ( next_s->parent_link == NULL )
-    next_s->parent_link = trans;
-
-  return trans;
-}
-
-
-Transition* 
-State::transfer(State* maybe_next_s, ObjectMachine* boilerplate)
+State::transfer(State* maybe_next_s, ObjectMachine* boilerplate, bool is_missing)
 {
   Transition* trans;
   State* next_s;
@@ -279,73 +298,82 @@ State::transfer(State* maybe_next_s, ObjectMachine* boilerplate)
   trans = find_transition(maybe_next_s, boilerplate != NULL);
   
   if ( trans == NULL ) {
-    // Not exist
-    // We try to search and add to the state machine pool
+    // Not exist, We add it
     next_s = machine->search_state(maybe_next_s);
 
     if ( boilerplate != NULL ) {
-      State* exit_s = boilerplate->exit_state();
-      trans = add_summary_transition(next_s, exit_s);
+      trans = new SummaryTransition(this, next_s, boilerplate);
     }
     else {
-      trans = add_transition(next_s);
+      trans = new Transition(this, next_s);
     }
+    
+    if (!is_missing) {
+      // Update the parent link only for regular evolutions
+      if ( (depth+1) < next_s->depth ) {
+	// We update the parent link to maintain the SPT
+	next_s->parent_link = trans;
+	next_s->depth = depth + 1;
+      }
+    }
+    else if (next_s->parent_link == NULL) {
+      // Just keep the node connected
+      next_s->parent_link = trans;
+    }
+    
+    out_edges[next_s] = trans;
   }
-  
-  // Update transition
+
   return trans;
 }
 
 
-ObjectState::ObjectState() 
+ObjectState::ObjectState()
+  : State()
 { 
-  id = 0;
-  machine = NULL;
-  map_d = null_map; 
+  attach_map(null_map); 
 }
 
 
 ObjectState::ObjectState( int my_id )
+  : State()
 {
   id = my_id;
-  machine = NULL;
-  map_d = null_map;
+  attach_map(null_map);
 }
 
 
-void ObjectState::set_map(Map* new_map)
+void 
+ObjectState::set_map(Map* new_map)
 {
-  /*
   if ( map_d != null_map )
     map_d->remove_usage(this);
-  */
-
+  
   map_d = new_map;
   map_d->add_usage(this);
 }
 
-Map* ObjectState::get_map() const
-{
-  return map_d;
-}
-
-
-bool ObjectState::less_than(const State* other) const
+bool 
+ObjectState::less_than(const State* other) const
 {
   return map_d->id() < other->get_map()->id();
 }
 
 
-State* ObjectState::clone() const
+State* 
+ObjectState::clone() const
 {
   ObjectState* new_s = new ObjectState;
   new_s->set_map(map_d);
   new_s->machine = machine;
+  new_s->id = machine->get_next_id();
+  machine->add_state(new_s);
   return new_s;
 }
 
 
-string ObjectState::toString() const 
+string 
+ObjectState::toString() const 
 {
   stringstream ss;
 
@@ -357,7 +385,8 @@ string ObjectState::toString() const
   return ss.str();
 }
 
-const char* ObjectState::graphviz_style() const
+const char* 
+ObjectState::graphviz_style() const
 {
   const char* style = NULL;
 
@@ -371,39 +400,34 @@ const char* ObjectState::graphviz_style() const
 }
 
 
-FunctionState::FunctionState() 
+FunctionState::FunctionState()
+  : ObjectState()
 { 
-  id = 0;
-  machine = NULL;
-  map_d = null_map;
-  code_d = null_code;
+  attach_code(null_code);
 }
 
 
 FunctionState::FunctionState( int my_id )
+  : ObjectState(my_id)
 {
-  id = my_id;
-  machine = NULL;
-  map_d = null_map;
-  code_d = null_code;
+  attach_code(null_code);
 }
   
 
-void FunctionState::set_code(Code* new_code)
+void 
+FunctionState::set_code(Code* new_code)
 {
+  if ( code_d != null_code )
+    code_d->remove_usage(this);
+  
   code_d = new_code;
   code_d->add_usage(this);
 }
 
 
-Code* FunctionState::get_code()
-{
-  return code_d;
-}
-
-
 // Implement virtual functions
-bool FunctionState::less_than(const State* other) const
+bool 
+FunctionState::less_than(const State* other) const
 {
   switch (other->type()) {
   case State::SObject:
@@ -422,13 +446,14 @@ bool FunctionState::less_than(const State* other) const
   return this < other;
 }
 
-
 State* FunctionState::clone() const
 {
   FunctionState* new_s = new FunctionState;
   new_s->set_map( map_d );
   new_s->set_code( code_d );
   new_s->machine = machine;
+  new_s->id = machine->get_next_id();
+  machine->add_state(new_s);
   return new_s;
 }
 
@@ -444,8 +469,6 @@ string FunctionState::toString() const
   
   return ss.str();
 }
-
-int StateMachine::id_counter = 0;
 
 StateMachine* 
 StateMachine::NewMachine( StateMachine::Mtype type )
@@ -467,8 +490,6 @@ StateMachine::NewMachine( StateMachine::Mtype type )
   }
 
   sm->id = id_counter++;
-  //if ( sm->id == 10256 )
-  //printf( "come on\n" );
   return sm;
 }
 
@@ -477,21 +498,29 @@ StateMachine::StateMachine()
 {
   states.clear();
   inst_at.clear();
-  m_name.clear();
+  m_name="";
 }
-
-
-void 
-StateMachine::set_name(const char* name)
-{
-  m_name.assign(name);
-}
-
 
 bool 
-StateMachine::has_name()
+StateMachine::is_in_lib()
 {
-  return m_name.size() != 0;
+  if ( has_name() ) {
+    if ( m_name.find("v8natives.js") != string::npos ||
+	 m_name.find("runtime.js") != string::npos ||
+	 m_name.find("array.js") != string::npos ||
+	 m_name.find("messages.js") != string::npos ||
+	 m_name.find("string.js") != string::npos ||
+	 m_name.find("regexp.js") != string::npos ||
+	 m_name.find("date.js") != string::npos ||
+	 m_name.find("json.js") != string::npos ||
+	 m_name.find("math.js") != string::npos ||
+	 m_name.find("uri.js") != string::npos ||
+	 m_name.find("arraybuffer.js") != string::npos ||
+	 m_name.find("typedarray.js") != string::npos )
+      return true;
+  }
+
+  return false;
 }
 
 
@@ -518,7 +547,7 @@ StateMachine::size()
     ans += s->size();
   }
 
-  return ans + states.size(); 
+  return states.size(); 
 }
 
 
@@ -550,21 +579,17 @@ State*
 StateMachine::search_state(State* s, bool create)
 {
   StatesPool::iterator it = states.find(s);
-  
+  State *res = NULL;
+
   if ( it == states.end() ) {
     if ( create ) {
-      s = s->clone();
-      s->id = states.size();
-      add_state(s);
-    }
-    else {
-      s = NULL;
+      res = s->clone();
     }
   }
   else
-    s = *it;
+    res = *it;
   
-  return s;
+  return res;
 }
 
 
@@ -582,26 +607,22 @@ StateMachine::delete_state(State* s)
 
 
 State* 
-StateMachine::get_instance_pos(int d, bool new_instance)
+StateMachine::find_instance(int d, bool new_instance)
 {
   State* s = NULL;
   
   map<int, State*>::iterator it = inst_at.find(d);
-  if ( it == inst_at.end() ) {
-    // Add this instance
+
+  if ( it != inst_at.end() &&
+       new_instance == false ) {
+    // We obtain the old position
+    s = it->second;
+  }
+  else {
+    // This is a new instance or reallocated to another object
     s = start;
     inst_at[d] = s;
   }
-  else {
-    // We obtain the old position first
-    s = it->second;
-
-    if ( new_instance == true ) {
-      // This instance has been reclaimed by GC and it is allocated to the same object again
-      s = start;
-      inst_at[d] = s;
-    }
-  }    
   
   return s;
 }
@@ -626,8 +647,9 @@ StateMachine::rename_instance(int old_name, int new_name)
 
 
 void 
-StateMachine::migrate_instance(int ins_d, Transition* trans)
+StateMachine::migrate_instance(int ins_d, TransPacket* tp)
 {
+  Transition *trans = tp->trans;
   State* src = trans->source;
   State* tgt = trans->target;
 
@@ -637,31 +659,34 @@ StateMachine::migrate_instance(int ins_d, Transition* trans)
   // Call monitoring action
   if ( do_analyze ) {
     Map* src_map = ((ObjectState*)src)->get_map();
-    src_map->deopt_deps(trans);
+    src_map->deopt_deps(tp);
   }
 }
 
 
-// We search backwardly and push the deque in front
+// Actually we search backwardly and push the deque in front
 int
-StateMachine::forward_search_path(State* cur_s, State* end_s, deque<Transition*>& path)
+StateMachine::forward_search_path(State* cur_s, State* end_s, deque<Transition*> *path)
 {
   int dist = 0;
   
+  // Swap the ends
   State* temp = cur_s;
   cur_s = end_s;
   end_s = temp;
   
-  while ( cur_s != end_s && cur_s != start ) {
+  while ( cur_s != end_s ) {
+    // The search only follows parent link, which is incomplete
     Transition* trans = cur_s->parent_link;
-    path.push_front(trans);
+    if ( trans == NULL ) break;
     dist++;
     cur_s = trans->source;
+    if ( path != NULL ) path->push_front(trans);
   }
 
   if ( cur_s == start && end_s != start ) {
     // the path does not exist
-    path.clear();
+    if ( path != NULL ) path->clear();
     return -1;
   }
 
@@ -670,20 +695,21 @@ StateMachine::forward_search_path(State* cur_s, State* end_s, deque<Transition*>
 
 
 int 
-StateMachine::backward_search_path(State* cur_s, State* end_s, deque<Transition*>& path)
+StateMachine::backward_search_path(State* cur_s, State* end_s, deque<Transition*> *path)
 {
   int dist = 0;
   
-  while ( cur_s != end_s && cur_s != start ) {
+  while ( cur_s != end_s ) {
     Transition* trans = cur_s -> parent_link;
-    path.push_back(trans);
+    if ( trans == NULL ) break;
     dist++;
     cur_s = trans->source;
+    if ( path != NULL ) path->push_back(trans);
   }
 
   if ( cur_s == start && end_s != start ) {
     // the path does not exist
-    path.clear();
+    if ( path != NULL ) path->clear();
     return -1;
   }
   
@@ -756,17 +782,14 @@ StateMachine::draw_graphviz(FILE* file, const char* sig)
 }
 
 
-void ObjectMachine::_init(StateMachine::Mtype _type)
+void 
+ObjectMachine::_init(StateMachine::Mtype _type)
 {
   start = new ObjectState(0);
   start->set_machine(this);
-  start->set_map(start_map);
+  start->attach_map(start_map);
+  start->depth = 0;
   add_state(start);
-
-  hole = new ObjectState(1<<30);
-  hole->set_machine(this);
-  hole->set_map(hole_map);
-  add_state(hole);
 
   type = _type;
   is_boilerplate = (_type == StateMachine::MBoilerplate);
@@ -816,18 +839,27 @@ ObjectState*
 ObjectMachine::jump_to_state_with_map(InstanceDescriptor* i_desc, int exp_map_id, bool new_instance)
 {
   int ins_id = i_desc->id;
-  ObjectState *cur_s = (ObjectState*)get_instance_pos(ins_id, new_instance);
+  ObjectState *cur_s = (ObjectState*)find_instance(ins_id, new_instance);
   if ( exp_map_id == -1 ) return cur_s;
   
   Map* exp_map = find_map(exp_map_id);
-  
   if ( cur_s->get_map() != exp_map ) {
-    ObjectState* exp_s = (ObjectState*)search_state(exp_map, true);
-    exp_s->is_missing = true;
+    // And we make a missing link: cur_s -> exp_s
+    ObjectState* exp_s;
 
-    // And we make a link: cur_s -> exp_s
-    Transition* trans = cur_s->transfer(exp_s, NULL);
-    trans->insert_reason("?", 0);
+    if ( !exp_map->has_bound() ) {
+      temp_o.map_d = exp_map;
+      temp_o.machine = this;
+      exp_s = &temp_o;
+    }
+    else {
+      exp_s = (ObjectState*)exp_map->to_state();
+    }
+
+    Transition* trans = cur_s->transfer(exp_s, NULL, true);
+    vector<StateMachine*> contexts;
+    contexts.push_back(miss_context);
+    trans->insert_reason("?", contexts);
     
     inst_at[ins_id] = exp_s;
     cur_s = exp_s;
@@ -836,14 +868,14 @@ ObjectMachine::jump_to_state_with_map(InstanceDescriptor* i_desc, int exp_map_id
   return cur_s;
 }
 
-
-Transition* 
+/*
+TransPacket* 
 ObjectMachine::set_instance_map(InstanceDescriptor* i_desc, int map_id)
 {
   int ins_id = i_desc->id;
 
   // Obtain current position of this instance
-  State *cur_s = get_instance_pos(ins_id);
+  State *cur_s = find_instance(ins_id);
   
   // Build the target state
   // Using set_map will register this state to the map
@@ -851,15 +883,15 @@ ObjectMachine::set_instance_map(InstanceDescriptor* i_desc, int map_id)
   temp_o.map_d = find_map(map_id);
   temp_o.machine = this;
   
-  Transition* trans = cur_s->transfer( &temp_o, NULL );
-  trans->insert_reason("?", 0);
+  Transition* trans = cur_s->transfer(&temp_o, NULL, true);
+  TransPacket* tp = trans->insert_reason("?");
 
-  return trans;
+  return tp;
 }
+*/
 
-
-Transition* 
-ObjectMachine::evolve(InstanceDescriptor* i_desc, int old_map_id, int new_map_id, 
+TransPacket* 
+ObjectMachine::evolve(InstanceDescriptor* i_desc, vector<StateMachine*> &contexts, int old_map_id, int new_map_id, 
 		      ObjectMachine* boilerplate, const char* trans_dec, int cost, bool new_instance)
 {
   int ins_id = i_desc->id;
@@ -869,17 +901,19 @@ ObjectMachine::evolve(InstanceDescriptor* i_desc, int old_map_id, int new_map_id
   ObjectState* cur_s = jump_to_state_with_map(i_desc, old_map_id, new_instance);
 
   // Build the target state
-  temp_o.map_d = (new_map_id == -1 ? cur_s->get_map() : find_map(new_map_id));
+  Map* map_d = (new_map_id == -1 ? cur_s->get_map() : find_map(new_map_id));
+  temp_o.map_d = map_d;
   temp_o.machine = this;
-
+  
   // Transfer state
-  Transition* trans = cur_s->transfer( &temp_o, boilerplate );
-  trans->insert_reason(trans_dec, cost);
+  Transition* trans = cur_s->transfer(&temp_o, boilerplate);
+  TransPacket* tp = trans->insert_reason(trans_dec, contexts);
+  assert( map_d->has_bound() );
 
   // Renew the position of this instance
-  migrate_instance(ins_id, trans);
+  migrate_instance(ins_id, tp);
 
-  return trans;
+  return tp;
 }
 
 
@@ -894,6 +928,7 @@ FunctionMachine::FunctionMachine()
   start = new FunctionState(0);
   start->set_machine(this);
   ((FunctionState*)start)->set_code(start_code);
+  start->depth = 0;
   add_state(start);
 
   //
@@ -939,22 +974,22 @@ FunctionMachine::check_bailouts()
 	it != end; ++it ) {
     int bailout_id = it->first;
     int count = it->second;
-    if ( count >= 0.4 * total_deopts ) {
-      printf( "FactorOut: In %s, IC %d occupies %.1f%% of %d deopts.\n", 
+    if ( count >= 4 && count >= 0.4 * total_deopts ) {
+      printf( "factorOut: In %s, IC %d occupies %.1f%% of %d deopts.\n", 
 	      m_name.c_str(), bailout_id, (double)count/total_deopts * 100, total_deopts ); 
     }
   }
 }
 
 
-Transition* 
-FunctionMachine::evolve(InstanceDescriptor* i_desc, int map_id, int code_id, 
-			const char* trans_dec, int cost, bool new_instance)
+TransPacket* 
+FunctionMachine::evolve(InstanceDescriptor* i_desc, int map_id, 
+			int code_id, const char* trans_dec, int cost, bool new_instance)
 { 
   int ins_id = i_desc->id;
-
+  
   // Obtain current position of this instance
-  FunctionState *cur_s = (FunctionState*)get_instance_pos(ins_id, new_instance);
+  FunctionState *cur_s = (FunctionState*)find_instance(ins_id, new_instance);
 
   // Build the target state
   temp_f.map_d = (map_id == -1 ? cur_s->get_map() : find_map(map_id));
@@ -963,34 +998,110 @@ FunctionMachine::evolve(InstanceDescriptor* i_desc, int map_id, int code_id,
   
   // Transfer state
   Transition* trans = cur_s->transfer( &temp_f, NULL );
-  trans->insert_reason(trans_dec, cost);
+  vector<StateMachine*> contexts;
+  contexts.push_back(native_context);
+  TransPacket* tp = trans->insert_reason(trans_dec, contexts, cost);
 
   // Renew the position of this instance
-  migrate_instance(ins_id, trans);
+  migrate_instance(ins_id, tp);
 
-  return trans;
+  return tp;
 }
 
 
-bool
-InstanceDescriptor::has_history_state(State* his_s)
+void 
+print_transition(Transition* trans, bool prt_src, bool prt_trans, bool prt_tgt, const char* line_header, const char dir)
 {
-  State* cur_s = sm->get_instance_pos(id);
-  if ( cur_s == NULL ) 
-    return -1;
+  State* src = trans->source;
+  State* tgt = trans->target;
+  
+  if ( prt_src == true ) {
+    // The symbol for the leading transition
+    const char* pstr = NULL;
+    if ( trans->type() == Transition::TNormal )
+      pstr = src->toString().c_str();
+    else {
+      SummaryTransition* strans = (SummaryTransition*)trans;
+      pstr= strans->boilerplate->toString().c_str();
+    }
+   
+    printf( "%s<%s>", line_header, pstr);
+    if ( dir == '|' ) printf( "\n" );
+  }
+  
+  if ( prt_trans ) {
+    string reason;
+    trans->merge_reasons(reason, false);
+    if ( dir == '|' ) {
+      if ( prt_src || prt_tgt ) printf( "%s|\n", line_header );
+      printf( "%s%s\n", line_header, reason.c_str());
+      if ( prt_src || prt_tgt ) printf( "%s|\n", line_header );
+    }
+    else {
+      if ( prt_src || prt_tgt ) printf( "-" );
+      printf( "%s", reason.c_str() );
+      if ( prt_src || prt_tgt ) printf( "-" );
+    }
+  }
+  
+  if ( prt_tgt ) {
+    if ( dir == '|' ) printf( "%s", line_header );
+    printf( "<%s>" , tgt->toString().c_str() );
+    if ( dir == '|' ) printf( "\n" );
+  }
+}
 
-  State* q0 = sm->start;
+static int
+print_first_with_tabbing(Transition* trans, char* tabs, int n_tabs, int title_len)
+{
+  print_transition( trans, true, false, false, tabs );
+  
+  // Padding each line with some tabs
+  while ( n_tabs*8 - title_len < 2 ) { 
+    tabs[n_tabs++] = '\t';
+  }
+  tabs[n_tabs] = 0;
+  
+  // Print rest of the first transition
+  print_transition( trans, false, true, true, tabs );
+  return n_tabs;
+}
 
-  while ( cur_s != his_s && cur_s != q0 ) {
-    cur_s = cur_s -> parent_link->source;
+
+void 
+print_path(deque<Transition*>& path, const char* title, int skip_n)
+{
+  bool f_first = true;
+  string reason;
+  
+  // Calculate the line header for each transition print
+  int title_len = strlen(title);
+  int n_tabs = title_len / 8;
+  char tabs[32];
+  for ( int i = 0; i < n_tabs; ++i ) tabs[i] = '\t';
+  tabs[n_tabs] = 0;
+
+  printf( "%s", title );
+
+  // Skip the first several elements
+  if ( skip_n > 0 ) {
+    // We print the first element for reference
+    Transition* trans = path[0];
+    n_tabs = print_first_with_tabbing( trans, tabs, n_tabs, title_len );
+    printf( "%s|\n", tabs );
+    printf( "%s...(Omit %d transitions)\n", tabs, skip_n-1 );
+    f_first = false;
   }
 
-  return cur_s == his_s;
-}
-
-bool
-InstanceDescriptor::has_history_map(Map* his_map)
-{
-  State* his_s = his_map->to_state();
-  return has_history_state(his_s);
+  for ( int i = skip_n; i < path.size(); ++i ) {
+    Transition* trans = path[i];
+    
+    if ( f_first == true ) {
+      n_tabs = print_first_with_tabbing( trans, tabs, n_tabs, title_len );
+      f_first = false;
+    }
+    else {
+      print_transition( trans, false, true, true, tabs );
+    }
+  }
 }

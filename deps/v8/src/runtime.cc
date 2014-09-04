@@ -13851,15 +13851,12 @@ RUNTIME_FUNCTION(MaybeObject*, Runtime_LogFunctionCreate) {
   ASSERT(args.length() == 1);
   CONVERT_ARG_CHECKED(JSFunction, function, 0);
   DisallowHeapAllocation no_gc;
-  if ( !FLAG_trace_internals ) return function;
 
-  SharedFunctionInfo* shared = function->shared();
-  LOG( isolate,
-	  	EmitObjectEvent(
-		Logger::CreateFunction,
-		function,
-		shared)
-	);
+  if ( FLAG_trace_internals ) {
+    SharedFunctionInfo* shared = function->shared();
+    LOG( isolate,
+	 EmitFunctionEvent(Logger::CreateFunction, function, shared->code(), shared));
+  }
 
   return function;
 }
@@ -13896,7 +13893,7 @@ RUNTIME_FUNCTION(MaybeObject*, Runtime_LogNewArray) {
 	 EmitObjectEvent(
 			 Logger::CreateNewArray,
 			 array,
-			 isolate->array_function()->shared())
+			 isolate->context()->native_context()->array_function())
 	 );
   }
   

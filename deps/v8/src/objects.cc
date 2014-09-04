@@ -670,6 +670,7 @@ MaybeObject* JSObject::SetNormalizedProperty(Name* name,
       if (!maybe_dict->ToObject(&dict)) return maybe_dict;
     }
     set_properties(NameDictionary::cast(dict));
+    LOG_INTERNAL_EVENT(GetIsolate(), EmitObjectEvent(Logger::NewField, this, name, map(), value));
     return value;
   }
 
@@ -1981,12 +1982,12 @@ MaybeObject* JSObject::AddProperty(Name* name,
                                    ExtensibilityCheck extensibility_check,
                                    ValueType value_type) {
   ASSERT(!IsJSGlobalProxy());
-  Map* map_of_this = map();
+  Map* map_from = map();
   Heap* heap = GetHeap();
   Isolate* isolate = heap->isolate();
   MaybeObject* result;
   if (extensibility_check == PERFORM_EXTENSIBILITY_CHECK &&
-      !map_of_this->is_extensible()) {
+      !map_from->is_extensible()) {
     if (strict_mode == kNonStrictMode) {
       return value;
     } else {
@@ -1999,7 +2000,7 @@ MaybeObject* JSObject::AddProperty(Name* name,
 
   if (HasFastProperties()) {
     // Ensure the descriptor array does not get too big.
-    if (map_of_this->NumberOfOwnDescriptors() <
+    if (map_from->NumberOfOwnDescriptors() <
         DescriptorArray::kMaxNumberOfDescriptors) {
       if (value->IsJSFunction()) {
         result = AddConstantFunctionProperty(name,
@@ -2032,13 +2033,9 @@ MaybeObject* JSObject::AddProperty(Name* name,
   }
 
   if ( FLAG_trace_internals ) {
-	  LOG(isolate,
-		EmitObjectEvent(
-		Logger::NewField,
-		this,
-		name, map_of_this )
-		);
-	}
+    LOG(isolate,
+	EmitObjectEvent(Logger::NewField, this, name, map_from, value ));
+  }
 
   return *hresult;
 }
@@ -2348,8 +2345,10 @@ MaybeObject* JSObject::MigrateToMap(Map* new_map) {
   if (!old_map->InstancesNeedRewriting(
           new_map, number_of_fields, inobject, unused)) {
     set_map(new_map);
-		LOG_INTERNAL_EVENT( GetIsolate(),
+    /*
+    LOG_INTERNAL_EVENT( GetIsolate(),
 			EmitObjectEvent(Logger::SetMap, this, old_map));
+    */
     return this;
   }
 
@@ -2416,10 +2415,10 @@ MaybeObject* JSObject::MigrateToMap(Map* new_map) {
   }
 
   set_map(new_map);
-  
+  /*
   LOG_INTERNAL_EVENT( GetIsolate(),
 		      EmitObjectEvent(Logger::SetMap, this, old_map));
-
+  */
   return this;
 }
 
@@ -2463,11 +2462,8 @@ MaybeObject* Map::CopyGeneralizeAllRepresentations() {
 
 
 void Map::NotifyLeafMapLayoutChange() {
-  Isolate* isolate = GetIsolate();
-  LOG_INTERNAL_EVENT(isolate, EmitMapEvent(Logger::BeginDeoptOnMap, this));
-
   dependent_code()->DeoptimizeDependentCodeGroup(
-      isolate,
+      GetIsolate(),
       DependentCode::kPrototypeCheckGroup);
 }
 
@@ -2483,13 +2479,10 @@ void Map::DeprecateTransitionTree() {
   }
   deprecate();
 
-  Isolate* isolate = GetIsolate();
-  LOG_INTERNAL_EVENT(isolate, EmitMapEvent(Logger::BeginDeoptOnMap, this));
-
   dependent_code()->DeoptimizeDependentCodeGroup(
-      isolate, DependentCode::kTransitionGroup);
+      GetIsolate(), DependentCode::kTransitionGroup);
   dependent_code()->DeoptimizeDependentCodeGroup(
-      isolate, DependentCode::kPrototypeCheckGroup);
+      GetIsolate(), DependentCode::kPrototypeCheckGroup);
 }
 
 
@@ -3853,6 +3846,7 @@ MaybeObject* JSObject::SetPropertyForResult(LookupResult* lookup,
     case FIELD: {
       Representation representation = lookup->representation();
       if (!value->FitsRepresentation(representation)) {
+	LOG_INTERNAL_EVENT(isolate, EmitMapEvent(Logger::BeginDeoptOnMap, this, old_map));
         MaybeObject* maybe_failure =
             lookup->holder()->GeneralizeFieldRepresentation(
                 lookup->GetDescriptorIndex(), value->OptimalRepresentation());
@@ -3910,7 +3904,7 @@ MaybeObject* JSObject::SetPropertyForResult(LookupResult* lookup,
               MaybeObject* maybe_failure =
                   lookup->holder()->MigrateToMap(Map::cast(back));
               if (maybe_failure->IsFailure()) return maybe_failure;
-							old_map = map();
+	      old_map = map();
             }
             DescriptorArray* desc = transition_map->instance_descriptors();
             int descriptor = transition_map->LastAdded();
@@ -3938,6 +3932,7 @@ MaybeObject* JSObject::SetPropertyForResult(LookupResult* lookup,
         } else {
           // Otherwise, replace with a map transition to a new map with a FIELD,
           // even if the value is a constant function.
+	  LOG_INTERNAL_EVENT(isolate, EmitMapEvent(Logger::BeginDeoptOnMap, this, old_map));
           result = lookup->holder()->ConvertTransitionToMapTransition(
               lookup->GetTransitionIndex(), *name, *value, attributes);
         }
@@ -3953,14 +3948,17 @@ MaybeObject* JSObject::SetPropertyForResult(LookupResult* lookup,
   if (!result->ToHandle(&hresult, isolate)) return result;
   
   // Log field addition/update
-  if ( lookup->type() == TRANSITION ) {
-    LOG_INTERNAL_EVENT(isolate, 
-		       EmitObjectEvent(Logger::NewField, *self, *name, old_map));
-  }
-  else {
-    if ( self->map() != old_map ) {
-      LOG_INTERNAL_EVENT(isolate, 
-			 EmitObjectEvent(Logger::WriteFieldTransition, *self, *name, old_map));
+  if ( FLAG_trace_internals &&
+       lookup->type() != NORMAL ) {
+    if ( lookup->type() == TRANSITION ) {
+      LOG(isolate, 
+	  EmitObjectEvent(Logger::NewField, *self, *name, old_map, *value));
+    }
+    else {
+      if ( self->map() != old_map ) {
+	LOG(isolate, 
+	    EmitObjectEvent(Logger::UptField, *self, *name, old_map, *value));
+      }
     }
   }
 
@@ -4078,6 +4076,7 @@ MaybeObject* JSObject::SetLocalPropertyIgnoreAttributes(
           value->OptimalRepresentation(value_type);
       if (value_representation.IsNone()) break;
       if (!value_representation.fits_into(representation)) {
+	LOG_INTERNAL_EVENT(isolate, EmitMapEvent(Logger::BeginDeoptOnMap, this, old_map));
         MaybeObject* maybe_failure = self->GeneralizeFieldRepresentation(
             lookup.GetDescriptorIndex(), value_representation);
         if (maybe_failure->IsFailure()) return maybe_failure;
@@ -4130,7 +4129,6 @@ MaybeObject* JSObject::SetLocalPropertyIgnoreAttributes(
             if (back->IsMap()) {
               MaybeObject* maybe_failure = self->MigrateToMap(Map::cast(back));
               if (maybe_failure->IsFailure()) return maybe_failure;
-							old_map = map();			// update old map
             }
             DescriptorArray* desc = transition_map->instance_descriptors();
             int descriptor = transition_map->LastAdded();
@@ -4146,9 +4144,9 @@ MaybeObject* JSObject::SetLocalPropertyIgnoreAttributes(
         result = self->ConvertDescriptorToField(*name, *value, attributes);
       } else {
         ASSERT(details.type() == CONSTANT_FUNCTION);
-
         // Replace transition to CONSTANT FUNCTION with a map transition to a
         // new map with a FIELD, even if the value is a function.
+	LOG_INTERNAL_EVENT(isolate, EmitMapEvent(Logger::BeginDeoptOnMap, this, old_map));
         result = self->ConvertTransitionToMapTransition(
             lookup.GetTransitionIndex(), *name, *value, attributes);
       }
@@ -4164,13 +4162,13 @@ MaybeObject* JSObject::SetLocalPropertyIgnoreAttributes(
 
   // Log field addition/update
   if ( lookup.type() == TRANSITION ) {
-		LOG_INTERNAL_EVENT(isolate, 
-				   EmitObjectEvent(Logger::NewField, *self, *name, old_map));
+    LOG_INTERNAL_EVENT(isolate, 
+		       EmitObjectEvent(Logger::NewField, *self, *name, old_map, *value));
   }
   else {
     if ( self->map() != old_map ) {
       LOG_INTERNAL_EVENT(isolate, 
-			 EmitObjectEvent(Logger::WriteFieldTransition, *self, *name, old_map));
+			 EmitObjectEvent(Logger::UptField, *self, *name, old_map, *value));
     }
   }
 
@@ -4604,6 +4602,8 @@ MaybeObject* JSObject::NormalizeProperties(PropertyNormalizationMode mode,
   }
 
   set_map(new_map);
+
+  LOG_INTERNAL_EVENT(GetIsolate(), EmitMapEvent(Logger::BeginDeoptOnMap, this, map_of_this));
   map_of_this->NotifyLeafMapLayoutChange();
 
   set_properties(dictionary);
@@ -4618,13 +4618,9 @@ MaybeObject* JSObject::NormalizeProperties(PropertyNormalizationMode mode,
 #endif
 
   if ( FLAG_trace_internals ) {
-	Isolate* isolate = GetIsolate();
-	LOG(isolate,
-	  EmitObjectEvent(
-	  Logger::PropertyToSlowMode,
-	  this,
-	  map_of_this)
-	  );
+    Isolate* isolate = GetIsolate();
+    LOG(isolate,
+	EmitSignalEvent(Logger::PropertyToSlowMode, this, map_of_this));
   }
 
   return this;
@@ -4739,8 +4735,7 @@ MaybeObject* JSObject::NormalizeElements() {
     set_elements(dictionary);
   }
 
-  old_map->GetHeap()->isolate()->counters()->elements_to_dictionary()->
-      Increment();
+  old_map->GetHeap()->isolate()->counters()->elements_to_dictionary()->Increment();
 
 #ifdef DEBUG
   if (FLAG_trace_normalization) {
@@ -4750,13 +4745,9 @@ MaybeObject* JSObject::NormalizeElements() {
 #endif
 
   if ( FLAG_trace_internals ) {
-	Isolate* isolate = GetIsolate();
-	LOG(isolate,
-	  EmitObjectEvent(
-	  Logger::ElemToSlowMode,
-	  this, 
-	  old_object_map)
-	  );
+    Isolate* isolate = GetIsolate();
+    LOG(isolate,
+	EmitSignalEvent(Logger::ElemToSlowMode, this, old_object_map));
   }
 
   ASSERT(HasDictionaryElements() || HasDictionaryArgumentsElements());
@@ -5168,6 +5159,7 @@ MaybeObject* JSObject::DeleteElement(uint32_t index, DeleteMode mode) {
   // From this point on everything needs to be handlified.
   HandleScope scope(isolate);
   Handle<JSObject> self(this);
+  Map* old_map = map();
 
   Handle<Object> old_value;
   bool should_enqueue_change_record = false;
@@ -5194,6 +5186,11 @@ MaybeObject* JSObject::DeleteElement(uint32_t index, DeleteMode mode) {
   if (should_enqueue_change_record && !self->HasLocalElement(index)) {
     Handle<String> name = isolate->factory()->Uint32ToString(index);
     EnqueueChangeRecord(self, "deleted", name, old_value);
+  }
+
+  if ( FLAG_trace_internals ) {
+    LOG(isolate,
+	EmitObjectEvent(Logger::DelElem, this, index, old_map));
   }
 
   return *hresult;
@@ -5275,7 +5272,6 @@ MaybeObject* JSObject::DeleteProperty(Name* name, DeleteMode mode) {
     result = self->NormalizeProperties(CLEAR_INOBJECT_PROPERTIES, 0);
     if (!result->To(&obj)) return result;
     // Make sure the properties are normalized before removing the entry.
-	old_map = map();		// update
     result = self->DeleteNormalizedProperty(*hname, mode);
   }
 
@@ -5287,12 +5283,8 @@ MaybeObject* JSObject::DeleteProperty(Name* name, DeleteMode mode) {
   }
 
   if ( FLAG_trace_internals ) {
-	LOG(isolate,
-	  EmitObjectEvent(
-	  Logger::DelField,
-	  this,
-	  *hname, old_map)
-	 );
+    LOG(isolate,
+	EmitObjectEvent(Logger::DelField, this, *hname, old_map));
   }
 
   return *hresult;
@@ -10956,10 +10948,16 @@ MaybeObject* JSObject::SetFastElementsCapacityAndLength(
                             GetElementsKind(), new_elements);
   }
 
-	if ( old_map != map() ) {
-		LOG_INTERNAL_EVENT(GetIsolate(), 
-			EmitObjectEvent(Logger::ElemTransition, this, old_map));
-	}
+  if ( old_map != map() ) {
+    if ( elements_kind == DICTIONARY_ELEMENTS ) {
+      LOG_INTERNAL_EVENT(GetIsolate(), 
+			 EmitSignalEvent(Logger::ElemToFastMode, this, old_map));
+    }
+    else {
+      LOG_INTERNAL_EVENT(GetIsolate(), 
+			 EmitSignalEvent(Logger::ElemTransition, this, old_map));
+    }
+  }
 
   if (IsJSArray()) {
     JSArray::cast(this)->set_length(Smi::FromInt(length));
@@ -10990,7 +10988,7 @@ MaybeObject* JSObject::SetFastDoubleElementsCapacityAndLength(
     new_elements_kind = FAST_DOUBLE_ELEMENTS;
   }
 
-	Map* old_map = map();
+  Map* old_map = map();
   Map* new_map;
   { MaybeObject* maybe_obj =
         GetElementsTransitionMap(heap->isolate(), new_elements_kind);
@@ -11016,10 +11014,16 @@ MaybeObject* JSObject::SetFastDoubleElementsCapacityAndLength(
                             GetElementsKind(), elems);
   }
 
-	if ( old_map != new_map ) {
-		LOG_INTERNAL_EVENT(GetIsolate(), 
-			EmitObjectEvent(Logger::ElemTransition, this, old_map));
-	}
+  if ( old_map != new_map ) {
+    if ( elements_kind == DICTIONARY_ELEMENTS ) {
+      LOG_INTERNAL_EVENT(GetIsolate(), 
+			 EmitSignalEvent(Logger::ElemToFastMode, this, old_map));
+    }
+    else {
+      LOG_INTERNAL_EVENT(GetIsolate(), 
+			 EmitObjectEvent(Logger::ElemTransition, this, old_map));
+    }
+  }
 
   if (IsJSArray()) {
     JSArray::cast(this)->set_length(Smi::FromInt(length));
@@ -11037,8 +11041,14 @@ MaybeObject* JSArray::Initialize(int capacity, int length) {
 
 
 void JSArray::Expand(int required_size) {
-  GetIsolate()->factory()->SetElementsCapacityAndLength(
-      Handle<JSArray>(this), required_size, required_size);
+  Isolate* isolate = GetIsolate();
+  Handle<JSArray> self(this);
+
+  isolate->factory()->SetElementsCapacityAndLength(
+      self, required_size, required_size);
+  
+  LOG_INTERNAL_EVENT( isolate, 
+		      EmitObjectEvent(Logger::ExpandArray, *self) );
 }
 
 
@@ -12301,6 +12311,7 @@ MaybeObject* JSObject::SetElement(uint32_t index,
   Handle<Object> old_value = isolate->factory()->the_hole_value();
   Handle<Object> old_length_handle;
   Handle<Object> new_length_handle;
+  Handle<Map> old_map(map());
 
   if (old_attributes != ABSENT) {
     if (self->GetLocalElementAccessorPair(index) == NULL)
@@ -12356,6 +12367,8 @@ MaybeObject* JSObject::SetElement(uint32_t index,
     }
   }
 
+  LOG_INTERNAL_EVENT(isolate,
+		     EmitObjectEvent(Logger::SetElem, *self, index, *old_map)); 
   return *hresult;
 }
 
@@ -12539,7 +12552,6 @@ MaybeObject* JSObject::TransitionElementsKind(ElementsKind to_kind) {
   if (maybe_failure->IsFailure()) return maybe_failure;
 
   Isolate* isolate = GetIsolate();
-  Map* old_map = map();
 
   if (elements() == isolate->heap()->empty_fixed_array() ||
       (IsFastSmiOrObjectElementsKind(from_kind) &&
@@ -12557,8 +12569,14 @@ MaybeObject* JSObject::TransitionElementsKind(ElementsKind to_kind) {
       FixedArrayBase* elms = FixedArrayBase::cast(elements());
       PrintElementsTransition(stdout, from_kind, elms, to_kind, elms);
     }
-		LOG_INTERNAL_EVENT(isolate, EmitObjectEvent(Logger::ElemTransition, this, old_map));
-		return this;
+
+    if ( FLAG_trace_internals ) {
+      FixedArrayBase* elms = FixedArrayBase::cast(elements());
+      uint32_t capacity = static_cast<uint32_t>(elms->length());
+      LOG(isolate, EmitSignalEvent(Logger::ElemTransition, this, capacity));
+    }
+
+    return this;
   }
 
   FixedArrayBase* elms = FixedArrayBase::cast(elements());
@@ -12582,7 +12600,7 @@ MaybeObject* JSObject::TransitionElementsKind(ElementsKind to_kind) {
         SetFastDoubleElementsCapacityAndLength(capacity, length);
     if (maybe_result->IsFailure()) return maybe_result;
     ValidateElements();
-	return this;
+    return this;
   }
 
   if (IsFastDoubleElementsKind(from_kind) &&
@@ -12591,7 +12609,7 @@ MaybeObject* JSObject::TransitionElementsKind(ElementsKind to_kind) {
         capacity, length, kDontAllowSmiElements);
     if (maybe_result->IsFailure()) return maybe_result;
     ValidateElements();
-	return this;
+    return this;
   }
 
   // This method should never be called for any other case than the ones
@@ -15286,11 +15304,11 @@ MaybeObject* NameDictionary::TransformPropertiesToFastFor(
   }
 
   Map* old_map = obj->map();
-  int inobject_props = obj->map()->inobject_properties();
+  int inobject_props = old_map->inobject_properties();
 
   // Allocate new map.
   Map* new_map;
-  MaybeObject* maybe_new_map = obj->map()->CopyDropDescriptors();
+  MaybeObject* maybe_new_map = old_map->CopyDropDescriptors();
   if (!maybe_new_map->To(&new_map)) return maybe_new_map;
   new_map->set_dictionary_map(false);
 
@@ -15396,7 +15414,7 @@ MaybeObject* NameDictionary::TransformPropertiesToFastFor(
   ASSERT(obj->HasFastProperties());
 
   LOG_INTERNAL_EVENT(GetIsolate(),
-	EmitObjectEvent(Logger::PropertyToFastMode, obj, old_map));
+		     EmitSignalEvent(Logger::PropertyToFastMode, obj, old_map));
 
   return obj;
 }

@@ -4,8 +4,7 @@
 #ifndef SM_BASICS_H
 #define SM_BASICS_H
 
-#include "automata.hh"
-
+#include "jsweeter.hh"
 
 // initialize data structures
 extern void 
@@ -24,12 +23,12 @@ build_automata(const char*);
 
 // Find (and create) machine from signature
 StateMachine* 
-find_signature(int m_sig, StateMachine::Mtype type, bool create=false);
+find_signature(int m_sig, StateMachine::Mtype type = StateMachine::MObject, bool create=false);
 
 
 // find (and create) instance descriptor
 InstanceDescriptor*
-find_instance( int ins_addr, StateMachine::Mtype type, bool create_descriptor=false, bool create_sm=false);
+find_instance( int ins_addr, StateMachine::Mtype type = StateMachine::MObject, bool create_descriptor=false);
 
 
 // Draw the state machines in graphviz format

@@ -18,14 +18,45 @@ using std::map;
 using std::stringstream;
 using std::deque;
 
-class Transition;
-class State;
-class StateMachine;
-class ObjectMachine;
-class FunctionMachine;
-class InstanceDescriptor;
+#include "jsweeter.hh"
 
-#include "type-info.hh"
+// Record of a single object, array, and function
+class InstanceDescriptor
+{
+public:
+  // Internal id and raw address
+  int id, raw_addr;
+  // Whether the backing storage for properties and elements are dictionary
+  bool prop_dict, elem_dict;
+  // Is this instance watched for some purpose?
+  bool is_watched;
+  // Next operation on this object changes map transition graph and invalidates all operations dependent on these maps
+  bool force_deopt; 
+  // State machine that contains this instance
+  StateMachine* sm;
+  // Birth information for this instance
+  TransPacket* birth_place;
+
+ public:
+  InstanceDescriptor() 
+  { 
+    id = raw_addr = -1;
+    prop_dict = elem_dict = false;
+    is_watched = false;
+    force_deopt = false;
+    sm = NULL;
+    birth_place = NULL;
+  }
+   
+public:
+  // Return the state for this instance
+  State* location();
+  // Search if this instance owned his_s in history
+  bool has_history_state(State* his_s);
+  // Search if this instance owned his_map in history
+  bool has_history_map(Map* his_map);
+};
+
 
 // The information asscociated to a transition
 class TransPacket
@@ -35,7 +66,7 @@ class TransPacket
   {
     bool operator()(TransPacket* lhs, TransPacket* rhs)
     {
-      return (lhs->reason) < (rhs->reason);
+      return *lhs < *rhs;
     }
   };
 
@@ -46,22 +77,23 @@ class TransPacket
   string reason;
   // Cost of this transition
   int cost;
-  // For an object event, context is the function where this operation happens
-  StateMachine* context;
+  // Contexts are the call chain for locating an event
+  vector<StateMachine*> contexts;
   // The number of instances that go through this transition
   int count;
 
  public:
   TransPacket();
-  TransPacket(const char* desc);
-  TransPacket(const char* desc, int c_);
+  TransPacket(const char*, vector<StateMachine*>&, int);
+  TransPacket(const TransPacket& other ) { *this = other; }
 
-  bool has_reason();
-
-  void describe(std::stringstream& ss) const;
-  
+  //
+  bool has_reason() { return reason.size() != 0; }
+  //
+  bool describe(std::stringstream& ss, bool = true) const;
+  //
   bool operator<(const TransPacket& rhs) const;
-
+  
   TransPacket& operator=(const TransPacket& rhs);
 };
 
@@ -84,8 +116,6 @@ class Transition
   State *source, *target;
   // Transision triggering operations and their cost
   TpSet triggers;
-  // Last triggering operation
-  TransPacket* last_;
   
  public:  
   Transition();
@@ -94,11 +124,18 @@ class Transition
   
   virtual TransType type() { return TNormal; }
 
-  void insert_reason(const char* r, int cost = 0);
+  // Insert a new transition reason
+  TransPacket* insert_reason(const char* r, vector<StateMachine*> &contexts, int cost = 0);
+  TransPacket* insert_reason(TransPacket* tp);
 
-  void insert_reason(TransPacket* tp);
-
+  // Generate a single string for all reasons
   void merge_reasons(string& final, bool = true);
+
+  // Search the reason that begins with r
+  TransPacket* reason_begin_with(const char* r);
+
+  // Decide if there is a reson other than the specified one
+  bool reason_other_than(const char* r);
 
   // Tell the visualizer how to draw this transition
   virtual const char* graphviz_style();
@@ -111,12 +148,14 @@ class SummaryTransition : public Transition
 {
  public:
   // From which state on another machine, it exits and returns back
-  State *exit;
+  StateMachine* boilerplate;
 
  public:
-  SummaryTransition();
-
-  SummaryTransition(State* s_, State* t_, State* exit_ );
+  SummaryTransition() { boilerplate = NULL; }
+  SummaryTransition(State* s_, State* t_)
+    : Transition(s_, t_) { boilerplate = NULL; }
+  SummaryTransition(State* s_, State* t_, StateMachine* bp_ )
+    : Transition(s_, t_) { boilerplate = bp_; }
 
   TransType type() { return TSummary; }
 
@@ -150,29 +189,27 @@ class State
   int id;
   // Outgoing transition edges
   TransMap out_edges;
-  // Parent link
+  // The shortest distance from root to this state
+  int depth;
+  // Parent link to form the shortest path tree
   Transition* parent_link;
-  // We didn't track the evolution trail to this state
-  bool is_missing;
   // The state machine that contains this state
   StateMachine* machine;
 
  public:
   State();
+
+  void set_machine(StateMachine* sm) { machine = sm; }
+  StateMachine* get_machine() { return machine; }
+
   // Return the number of transitions emanating from this state
-  int size();
-  // Search the transition with specified destinate state
-  Transition* find_transition( State* next_s, bool by_boilerplate = false );
-  //
-  Transition* add_transition( State* next_s );
-  // 
-  Transition* add_summary_transition( State* next_s, State* exit_s );
-  // Update the mapping between instances and map/code
-  Transition* transfer(State* next_s, ObjectMachine* boilerplate);
+  int size() { return out_edges.size(); }
+
+  // find or create a transition to state next_s
+  // is_missing = true if the evolution is caused by unknown reasons
+  Transition* transfer(State* next_s, ObjectMachine* boilerplate, bool is_missing = false);
 
 public:
-  // Interfaces
-  void set_machine(StateMachine* sm) { machine = sm; }
   // Used for state search in set
   virtual bool less_than( const State* ) const = 0;
   // Make a clone of this state
@@ -183,31 +220,39 @@ public:
   virtual const char* graphviz_style() const = 0;
   //
   virtual Stype type() const = 0;
-  //
+  // Bind the map to the state (i.e. track the state<->map coupling)
   virtual Map* get_map() const = 0;
-  //
   virtual void set_map(Map*) = 0;
+  // Do not track the usage of the map
+  virtual void attach_map(Map* a_map) = 0;
+
+private:
+  // Search the transition with specified destinate state
+  Transition* find_transition( State* next_s, bool by_boilerplate = false );
 };
 
 
 // Describe an object
 class ObjectState : public State
 {
- public:
+public:
   //
   Map* map_d;
   
- public:
+public:
   ObjectState();
   ObjectState( int my_id );
 
-  // Implement virtual functions
+public:
+  void attach_map(Map* a_map) { map_d = a_map; }
+
+public:
   bool less_than(const State* other) const;   
   State* clone() const;
   string toString() const;
   const char* graphviz_style() const;
   Stype type() const { return SObject; }
-  Map* get_map() const;
+  Map* get_map() const { return map_d; }
   void set_map(Map*);
 };
 
@@ -216,17 +261,18 @@ class ObjectState : public State
 // Function is also an object
 class FunctionState : public ObjectState
 {
- public:
+public:
   Code* code_d;
   
- public:
+public:
   FunctionState();
   FunctionState( int my_id ); 
-
+  
+  void attach_code(Code* a_code) { code_d = a_code; }
   void set_code(Code*);
-  Code* get_code();
+  Code* get_code() const { return code_d; }
 
-  // Implement virtual functions
+public:
   bool less_than(const State* other) const;
   State* clone() const;
   string toString() const;
@@ -259,7 +305,7 @@ class StateMachine
   map<int, State*> inst_at;
   // start: Start state of this machine
   // hole: represents all the missing states
-  State *start, *hole;
+  State *start;
   // Name of this machine
   string m_name;
   // Record the type of this machine
@@ -267,14 +313,20 @@ class StateMachine
   
  public:
   
-  void set_name(const char* name);
+  void set_name(const char* name) { m_name.assign(name); }
   
-  bool has_name();
+  bool has_name() { return m_name.size() != 0; }
   
   string toString(bool succinct = false);
-  
-  // Return the number of states
+
+  // If this allocation source is from library code
+  bool is_in_lib();
+
+  // Return the number of nodes+edges
   int size();
+
+  // Return the next usable ID for state
+  int get_next_id() { return states.size(); }
 
   // Return the number of instances for this machine
   int count_instances();
@@ -292,7 +344,7 @@ class StateMachine
   void delete_state(State*);
   
   // Lookup the state for a particular instance
-  State* get_instance_pos(int d, bool new_instance=false);
+  State* find_instance(int d, bool new_instance=false);
   
   // Add an instance to this automaton
   void add_instance(int, State*);
@@ -301,14 +353,14 @@ class StateMachine
   void rename_instance(int,int);
   
   // Move an instance to another state
-  void migrate_instance(int, Transition*);
+  void migrate_instance(int, TransPacket*);
 
   // Search down the tree from cur_s to end_s
   // Return the distance between the two states (-1 means not found)
-  int forward_search_path(State* cur_s, State* end_s, deque<Transition*>& path);
+  int forward_search_path(State* cur_s, State* end_s, deque<Transition*> *path);
   
-  // Search up the tree from  cur_s to end_s (-1 means not found)
-  int backward_search_path(State* cur_s, State* end_s, deque<Transition*>& path);
+  // Search up the tree from cur_s to end_s (-1 means not found)
+  int backward_search_path(State* cur_s, State* end_s, deque<Transition*> *path);
 
   // Output graphviz instructions to draw this machine
   // m_id is used as the id of this machine
@@ -318,6 +370,10 @@ class StateMachine
  protected:
   // Not available for instantialization
   StateMachine();
+
+public:
+  static Map *start_map, *hole_map;
+  static Code *start_code;
 
  private:
   static int id_counter; 
@@ -351,10 +407,11 @@ class ObjectMachine : public StateMachine
   ObjectState* jump_to_state_with_map(InstanceDescriptor*, int, bool);
 
   // Set transition that just sets map of an instance
-  Transition* set_instance_map(InstanceDescriptor*, int map_d);
+  //TransPacket* set_instance_map(InstanceDescriptor*, int map_d);
 
   // new_map_id == -1: reuse current map
-  Transition* evolve(InstanceDescriptor*, int, int new_map_id, ObjectMachine*, const char*, int = 0, bool = false );
+  TransPacket* evolve(InstanceDescriptor*, vector<StateMachine*>&, int old_map_id, int new_map_id, 
+		      ObjectMachine* boilerplate, const char* = "", int = 0, bool = false );
 
 private:
   void _init(StateMachine::Mtype);
@@ -374,47 +431,31 @@ class FunctionMachine : public ObjectMachine
   //
   int total_deopts;
   // Opt/deopt message
-  std::string optMsg;
+  string optMsg;
    
  public:
   FunctionMachine();
 
-  // A specialized version of searching only function states
+  // A specialized version that searches function states only
   State* search_state(Map*, Code*, bool=true);  
   // Turn on/off the opt
   void set_opt_state( bool allow, const char* msg );
-  //
+  // Record a deoptimization
   void add_deopt(int);
-  //
+  // 
   void check_bailouts();
   // Evolve to the next state
-  Transition* evolve(InstanceDescriptor*, int, int, const char*, int = 0, bool = false);
+  TransPacket* evolve(InstanceDescriptor*, int, int, 
+		      const char* = "", int = 0, bool = false);
 };
 
-// Track the states transitions of a single object
-class InstanceDescriptor
-{
- public:
-  // Internal id
-  int id;
-  // State machine that contains this instance
-  StateMachine* sm;
-  // Last transition for this intance
-  Transition* last_raw_transition;
 
- public:
-  InstanceDescriptor() { 
-    id = -1; 
-    sm = NULL;
-    last_raw_transition = NULL;
-  }
-   
-public:
+// Public functions
+void 
+print_transition(Transition* trans, bool prt_src = true, bool prt_trans = true, 
+		 bool prt_tgt = true, const char* line_header="\t", const char dir='|');
 
-  // Search if this instance owned his_s in history
-  bool has_history_state(State* his_s);
-  // Search if this instance owned his_map in history
-  bool has_history_map(Map* his_map);
-};
+void 
+print_path(deque<Transition*>& path, const char* title, int skip_n = 0);
 
 #endif

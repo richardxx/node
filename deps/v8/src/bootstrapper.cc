@@ -1228,7 +1228,7 @@ bool Genesis::InitializeGlobal(Handle<GlobalObject> inner_global,
     Handle<Code> code = Handle<Code>(
         isolate->builtins()->builtin(Builtins::kIllegal));
     Handle<JSFunction> context_extension_fun =
-        factory->NewFunction(factory->empty_string(),
+      factory->NewFunction( factory->InternalizeUtf8String("ctxt_ext_fun"), //factory->empty_string(),
                              JS_CONTEXT_EXTENSION_OBJECT_TYPE,
                              JSObject::kHeaderSize,
                              code,
@@ -1247,7 +1247,8 @@ bool Genesis::InitializeGlobal(Handle<GlobalObject> inner_global,
         Handle<Code>(isolate->builtins()->builtin(
             Builtins::kHandleApiCallAsFunction));
     Handle<JSFunction> delegate =
-        factory->NewFunction(factory->empty_string(), JS_OBJECT_TYPE,
+      factory->NewFunction( factory->InternalizeUtf8String("call_as_ctor_delegate"), //factory->empty_string(), 
+			     JS_OBJECT_TYPE,
                              JSObject::kHeaderSize, code, true);
     native_context()->set_call_as_function_delegate(*delegate);
     delegate->shared()->DontAdaptArguments();
@@ -1259,7 +1260,8 @@ bool Genesis::InitializeGlobal(Handle<GlobalObject> inner_global,
         Handle<Code>(isolate->builtins()->builtin(
             Builtins::kHandleApiCallAsConstructor));
     Handle<JSFunction> delegate =
-        factory->NewFunction(factory->empty_string(), JS_OBJECT_TYPE,
+      factory->NewFunction( factory->InternalizeUtf8String("call_as_proto_delegate"), //actory->empty_string(), 
+			     JS_OBJECT_TYPE,
                              JSObject::kHeaderSize, code, true);
     native_context()->set_call_as_constructor_delegate(*delegate);
     delegate->shared()->DontAdaptArguments();
@@ -1672,7 +1674,7 @@ bool Genesis::InstallNatives() {
   Handle<Code> code = Handle<Code>(
       isolate()->builtins()->builtin(Builtins::kIllegal));
   Handle<JSFunction> builtins_fun =
-      factory()->NewFunction(factory()->empty_string(),
+    factory()->NewFunction(factory()->InternalizeUtf8String("builtins_fun"), //factory()->empty_string(),
                              JS_BUILTINS_OBJECT_TYPE,
                              JSBuiltinsObject::kSize, code, true);
 
@@ -1709,7 +1711,7 @@ bool Genesis::InstallNatives() {
 
   // Create a bridge function that has context in the native context.
   Handle<JSFunction> bridge =
-      factory()->NewFunction(factory()->empty_string(),
+    factory()->NewFunction(factory()->InternalizeUtf8String("bridge"), //factory()->empty_string(),
                              factory()->undefined_value());
   ASSERT(bridge->context() == *isolate()->native_context());
 
@@ -1869,7 +1871,7 @@ bool Genesis::InstallNatives() {
     }
 
     // Allocate the empty script.
-    Handle<Script> script = factory()->NewScript(factory()->empty_string());
+    Handle<Script> script = factory()->NewScript(factory()->InternalizeUtf8String("NatvScript")/*factory()->empty_string()*/);
     script->set_type(Smi::FromInt(Script::TYPE_NATIVE));
     heap()->public_set_empty_script(*script);
   }

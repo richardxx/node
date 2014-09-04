@@ -416,14 +416,17 @@ Logger::Logger(Isolate* isolate)
     prev_code_(NULL),
     epoch_(0),
     jsw_msg(NULL),
+    jsw_msg_del(NULL),
     jsw_pos(0),
-    jsw_func_info(NULL),
-    ic_counters(0) {
+    jsw_del_pos(0),
+    ic_counters(0),
+    jsw_func_info(NULL)
+{
 
 }
 
 
-Logger::~Logger() {  
+Logger::~Logger() {
   delete address_to_name_map_;
   delete name_buffer_;
   delete log_;
@@ -663,61 +666,72 @@ const char* Logger::get_closure_mark(SharedFunctionInfo* shared)
     return it->second;
   }
 
-  // If this function is not defined in any script file, just ignore it
-  Object* maybe_script = shared->script();
-  if ( !maybe_script->IsScript() ) {
-    (*jsw_func_info)[shared] = NULL;
-    return NULL;
-  }
-
+  // This is a special function?
   /*
-  // This is a special function
-  if ( shared == isolate_->array_function()->shared() )
-    return "JSArray";
-  else if ( shared == isolate_->object_function()->shared() )
-    return "JSObject";
+  Context* native_context = isolate_->context()->native_context();
+  JSFunction* array_function = native_context->array_function();
+  JSFunction* object_function = native_context->object_function();
+
+  if ( shared == array_function->shared() ) {
+    name_buf = new char[16];
+    strcpy( name_buf, "Array@sys" );
+  }
+  else if ( shared == object_function->shared() ) {
+    name_buf = new char[16];
+    strcpy( name_buf, "Object@sys" );
+  }
+  
+  if ( name_buf != NULL ) {
+    (*jsw_func_info)[shared] = name_buf;
+    return name_buf;
+  }
   */
 
-  Handle<Script> script(Script::cast(maybe_script));
-
-  // Obtain the location of this function in source code
-  int line_num = GetScriptLineNumber( script, 
-				      shared->start_position());
-  
-  // Line_num == -1 or non-string script name
-  if ( line_num == -1 ) {
-    (*jsw_func_info)[shared] = NULL;
-    return NULL;
-  }
-  
-  // Obtain the script name
+  // Obtain the script information
   char* p_script_name = NULL;
   int script_name_len = 0;
+  int line_num = -1;
 
-  if ( script->name()->IsString() ) {
-    Handle<String> script_name(String::cast(script->name()));
-    int full_path_len = script_name->length();
-    
-    // The script name might be a full path and has space
-    // We just truncate to the file name
-    char* script_full_path = script_name->ToAsciiArray();
-    int i = full_path_len -1;
-    for ( ; i > -1; --i ) {
-      char c = script_full_path[i];
-      if ( c == ' ' || c == '/' ) break;
+  Object* maybe_script = shared->script();
+  if ( maybe_script->IsScript() ) {
+    // This function comes from a script
+    Handle<Script> script(Script::cast(maybe_script));
+
+    if ( script->name()->IsString() ) {
+      Handle<String> script_name(String::cast(script->name()));
+      int full_path_len = script_name->length();
+      
+      // The script name might be a full path and has space
+      // We just truncate to the file name
+      char* script_full_path = script_name->ToAsciiArray();
+      int i = full_path_len -1;
+      for ( ; i > -1; --i ) {
+	char c = script_full_path[i];
+	if ( c == ' ' || c == '/' ) break;
+      }
+      
+      // Copy
+      p_script_name = new char[full_path_len - i + 1];
+      strcpy( p_script_name, script_full_path + i + 1 );
     }
-    
-    // Copy
-    p_script_name = new char[full_path_len - i + 1];
-    strcpy( p_script_name, script_full_path + i + 1 );
-    script_name_len = strlen(p_script_name);
+    else {
+      // Perhaps in an eval?
+      p_script_name = new char[10];
+      strcpy( p_script_name, "eval");
+    }
+
+    // Obtain the location of this function in source code
+    line_num = GetScriptLineNumber( script, 
+				    shared->start_position()); 
   }
   else {
-    // Don't understand why script has no name
-    p_script_name = new char[10];
-    strcpy( p_script_name, "internal");
-    script_name_len = 8;
+    // This function is not defined in any script file
+    // We assign a special name to the script
+    p_script_name = new char[16];
+    strcpy( p_script_name, "InnerScript" );
   }
+
+  script_name_len = strlen(p_script_name);
 
   // Obtain the function name
   const char* p_func_name = NULL;
@@ -733,17 +747,17 @@ const char* Logger::get_closure_mark(SharedFunctionInfo* shared)
     //p_func_name = c_f_name.Detach();      // Otherwise, the memory will be lost!!!! not \0 terminated
   }
   else {
-    p_func_name = "Closure*";
-    func_name_len = 7;
+    p_func_name = "Noname_func";
+    func_name_len = strlen(p_func_name);
   }
 
   // Compose the signature
-  char *name_buf = new char[func_name_len + script_name_len + 32];
+  char *name_buf = new char[func_name_len + script_name_len + 24];
   
-  sprintf(name_buf, "%s@%s:%d", 
+  sprintf(name_buf, "%s[%s:%d]", 
 	  p_func_name, p_script_name, line_num + 1);
 
-  // Remember the temporary memory
+  // Release the temporary memory
   delete p_script_name;
   
   // Cache the result
@@ -755,10 +769,10 @@ void Logger::jsw_output(bool force)
 {
   // The maximum length of an event
   // Just a guess, could result segmentation fault
-  #define MAX_EVENT_LENGTH 1024
+  
 
   if (force || 
-      jsw_pos + MAX_EVENT_LENGTH >= jsw_buf_limit ) {
+      jsw_pos + max_event_length >= jsw_buf_limit ) {
     // Try to get the lock first
     log_->mutex_->Lock();
     log_->WriteToFile(jsw_msg, jsw_pos);
@@ -776,7 +790,7 @@ void Logger::jsw_log(const char* format, ...)
 
   va_list args;
   va_start(args, format);
-  int result = v8::internal::OS::VSNPrintF(buf, format, args);
+  int result = OS::VSNPrintF(buf, format, args);
   va_end(args);
 
   // Result is -1 if output was truncated.
@@ -787,7 +801,6 @@ void Logger::jsw_log(const char* format, ...)
   }
 }
 
-
 void Logger::jsw_log(char c)
 {
   if ( jsw_pos + 1 >= jsw_buf_limit )
@@ -796,49 +809,79 @@ void Logger::jsw_log(char c)
   jsw_msg[jsw_pos++] = c;
 }
 
+// We don't check the write out bound for delay buffer
+void Logger::jsw_log_delay(const char* format, ...)
+{
+  Vector<char> buf(jsw_msg_del + jsw_del_pos,
+                   jsw_del_limit - jsw_del_pos);
+  
+  va_list args;
+  va_start(args, format);
+  int result = OS::VSNPrintF(buf, format, args);
+  va_end(args);
+  
+  if (result >= 0) {
+    jsw_del_pos += result;
+  } else {
+    // Result is -1 if output was truncated.
+    jsw_del_pos = jsw_del_limit;
+  }
+}
 
-// Obtain current JS top frame
-JSFunction* Logger::get_events_context()
+void Logger::jsw_merge_delay()
+{
+  if ( jsw_del_pos == 0 ) return;
+  if ( jsw_pos + jsw_del_pos >= jsw_buf_limit )
+    jsw_output();
+  
+  strncpy( jsw_msg, jsw_msg_del, jsw_del_pos );
+  jsw_pos = jsw_del_pos;
+} 
+
+
+// Obtain contexts chain to an event
+int Logger::get_contexts(JSFunction** contexts)
 {
   JavaScriptFrameIterator it(isolate_);
-  JSFunction* context = NULL;
+  int n_ctxts = 0;
 
-  while ( !it.done() && it.frame()->IsConstructor() )
-    it.Advance();
-
-  if ( !it.done() ) {
+  while ( !it.done() ) {
     JavaScriptFrame* frame = it.frame();
-    Object* def_function_or_smi = frame->function();
+    Object* func_or_smi = frame->function();
 
-    if ( def_function_or_smi->IsJSFunction() ) {
-      context = JSFunction::cast(def_function_or_smi);
+    if ( func_or_smi->IsJSFunction() ) {
+      JSFunction* context = JSFunction::cast(func_or_smi);
+      contexts[n_ctxts++] = context;
+      if ( !frame->IsConstructor() ) break;
     }
+    
+    it.Advance();
   }
   
-  // Cannot be null
-  return context;
+  return n_ctxts;
 }
 
 
 void Logger::EmitObjectEvent(InternalEvent event, HeapObject* obj, ...)
 {
   if (!log_->IsEnabled()) return;
-  if ( !isolate_->bootstrapper()->isInitialized() ) return;
-
-  JSFunction* def_function = get_events_context();  
-  const char* func_desc = "Global";
-
-  // We don't emit the events in the mysterious places
-  if ( def_function != NULL ) {
-    func_desc = get_closure_mark(def_function->shared());
-    if ( func_desc == NULL ) return;
-  }
+  //if (!isolate_->bootstrapper()->isInitialized()) return;
+  
+  /*
+    Handle<String> name = factory->InternalizeUtf8String(func_name);
+  */
+  
+  // contexts_depth == 0 -> native context
+  JSFunction* contexts[max_contexts_depth];   // We record up to 
+  int contexts_depth = get_contexts(contexts);  
 
   // The basic information for all objects
-  jsw_log( "%d %x %x",
-	   event,
-	   def_function,
-	   obj);
+  jsw_log( "%d %x %d", event, obj, contexts_depth);
+
+  // Output the contexts information
+  for ( int i = 0; i < contexts_depth; ++i ) {
+    jsw_log(" %x", contexts[i] );
+  }
 
   Map* cur_map = obj->map();
   va_list arg_ptr;
@@ -867,8 +910,7 @@ void Logger::EmitObjectEvent(InternalEvent event, HeapObject* obj, ...)
 	  int index = va_arg(arg_ptr, int);
 	  va_end(arg_ptr);
 	  
-	  jsw_log( " %x %x %s->%d", boilerplate_object, cur_map,
-		   func_desc, index );
+	  jsw_log( " %x %x %d", boilerplate_object, cur_map, index );
 	}
 	break;
 
@@ -880,40 +922,19 @@ void Logger::EmitObjectEvent(InternalEvent event, HeapObject* obj, ...)
 	  JSFunction* constructor = va_arg(arg_ptr, JSFunction*);
 	  va_end(arg_ptr);
 	  
-	  // Obtain the name for the constructor function
-	  SharedFunctionInfo* shared = constructor->shared();
-	  const char* cons_desc = get_closure_mark(shared);
-	  jsw_log( " %x %x New(%s)",
-		   constructor, cur_map,
-		   cons_desc == NULL ? "Noname*" : cons_desc );
+	  jsw_log( " %x %x", cur_map, constructor );
 	}
 	break;
 
   case CreateContext:
     {
       // Context is actually a fixed size array
-      // We record context because it may cause deoptimizations
-      jsw_log( " %x", cur_map );
+      va_start(arg_ptr, obj);
+      JSFunction* ctxt_host = va_arg(arg_ptr, JSFunction*);
+      va_end(arg_ptr);
+      jsw_log( " %x %x", ctxt_host->shared(), cur_map );
     }
     break;
-    
-  case CreateFunction:
-	{
-	  // Obtain the shared info for the newly created closure
-	  va_start(arg_ptr, obj);
-	  HeapObject* alloc_sig = va_arg(arg_ptr, HeapObject*);
-	  SharedFunctionInfo* shared = SharedFunctionInfo::cast(alloc_sig);
-	  va_end(arg_ptr);
-	  
-	  // Obtain the code and name
-	  JSFunction* function = JSFunction::cast(obj);
-	  Code* code = function->code();
-	  const char* new_func_desc = get_closure_mark(shared);
-	  jsw_log(" %x %x %x %s", 
-		  alloc_sig, cur_map, code,
-		  new_func_desc == NULL ? "Noname*" : new_func_desc);
-	}
-	break;
 
   case CopyObject:
 	{
@@ -928,101 +949,96 @@ void Logger::EmitObjectEvent(InternalEvent event, HeapObject* obj, ...)
 	{
 	  // Introduce a new map
 	  jsw_log(" %x %x", 
-		     cur_map, cur_map->prototype());
-	}
-	break;
-
-  case SetMap:
-	{
-	  // Introduce a new map
-	  jsw_log(" %x", cur_map);
+		  cur_map, cur_map->prototype());
 	}
 	break;
 
   case NewField:
-  case DelField:
-  case WriteFieldTransition:
+  case UptField:
 	{
 	  va_start(arg_ptr, obj);
 	  Name* f_name = va_arg(arg_ptr, Name*);
 	  Map* old_map = va_arg(arg_ptr, Map*);
+	  Object* value = va_arg(arg_ptr, Object*);
 	  va_end(arg_ptr);
-
+	  
 	  // map transitions
 	  jsw_log(" %x %x", old_map, cur_map);
-
+	  
+	  // log the value if it is a function
+	  if (value->IsJSFunction()) {
+	    JSFunction *func = JSFunction::cast(value);
+	    value = func->shared();
+	  }
+	  else {
+	    value = NULL;
+	  }
+	  
+	  jsw_log( " %x", value );
+	  
 	  // Then, the field name
 	  if ( f_name->IsString() && f_name->Size() > 0) {
-		String* s = String::cast(f_name);
-		jsw_log(" %s", *(s->ToCString()));
+	    String* s = String::cast(f_name);
+	    jsw_log(" %s", *(s->ToCString()));
 	  }
 	  else
-		jsw_log(" unknown_f");
+	    jsw_log(" unk_f");
 	}
 	break;
+	
+  case DelField:
+    {
+      va_start(arg_ptr, obj);
+      Name* f_name = va_arg(arg_ptr, Name*);
+      Map* old_map = va_arg(arg_ptr, Map*);
+      va_end(arg_ptr);
 
-  case ElemTransition:
-	{
-	  va_start(arg_ptr, obj);
-	  Map* old_map = va_arg(arg_ptr, Map*);
-	  va_end(arg_ptr);
+      // map transitions
+      jsw_log(" %x %x", old_map, cur_map);
 
-	  // map transitions
-	  jsw_log(" %x %x", old_map, cur_map);
-	}
-	// Fall through
+      // dummy value
+      jsw_log( " 0" );
+ 
+      // Then, the field name
+      if ( f_name->IsString() && f_name->Size() > 0) {
+	String* s = String::cast(f_name);
+	jsw_log(" %s", *(s->ToCString()));
+      }
+      else
+	jsw_log(" unknown_f");
+    }
+    break;
+
+  case SetElem:
+  case DelElem:
+    {
+      va_start(arg_ptr, obj);
+      uint32_t index = va_arg(arg_ptr, uint32_t);
+      Map* old_map = va_arg(arg_ptr, Map*);
+      va_end(arg_ptr);
+      
+      jsw_log(" %u %x %x", index, old_map, cur_map);
+    }
+    break;
+    
   case CowCopy:
-	{
-	  JSObject *array = JSObject::cast(obj);
-	  ElementsKind kind = cur_map->elements_kind();
-	  int base_size = IsFastDoubleElementsKind(kind) ? kDoubleSize : kPointerSize;
-	  int capacity = array->elements()->length();
-	  int bytes = base_size * capacity;
-	  jsw_log( " %d", bytes );
-	}
-	break;
+  case ExpandArray:
+    {
+      ElementsKind kind = cur_map->elements_kind();
+      int base_size = IsFastDoubleElementsKind(kind) ? kDoubleSize : kPointerSize;
+      
+      // Obtain the array capacity before growing
+      //va_start(arg_ptr, obj);
+      //int old_capacity = va_arg(arg_ptr, int);
+      //va_end(arg_ptr);
 
-  case ElemToSlowMode:
-  case PropertyToSlowMode:
-	{
-	  va_start(arg_ptr, obj);
-	  Map* old_map = va_arg(arg_ptr, Map*);
-	  va_end(arg_ptr);
-
-	  // Introduce a new map
-	  jsw_log(" %x %x", old_map, cur_map);
-	}
-	break;
-
-  case ElemToFastMode:
-  case PropertyToFastMode:
-	{
-	  va_start(arg_ptr, obj);
-	  Map* old_map = va_arg(arg_ptr, Map*);
-	  va_end(arg_ptr);
-
-	  // Introduce a new map
-	  if ( old_map == NULL ) old_map = cur_map;
-	  jsw_log(" %x %x", old_map, cur_map);
-	}
-	break;
-
- // case ExpandArray:
- // 	{
- // 	 ElementsKind kind = cur_map->elements_kind();
- // 	 int base_size = IsFastDoubleElementsKind(kind) ? kDoubleSize : kPointerSize;
-
- // 	 // Now we compute how many data are copied
- // 	 va_start(arg_ptr, obj);
- // 	 // Obtain the array capacity before growing
- // 	 int old_capacity = va_arg(arg_ptr, int);
- // 	 va_end(arg_ptr);
-
- // 	 int cur_capacity = obj->elements()->length();
- // 	 int bytes = base_size * cur_capacity;
- // 	 jsw_log( " %d", bytes );
- // 	}
-	break;
+      // Now we compute how many data are copied
+      JSObject *jsobj = JSObject::cast(obj);
+      int cur_capacity = jsobj->elements()->length();
+      int bytes = base_size * cur_capacity;
+      jsw_log( " %d", bytes );
+    }
+    break;
 
   default:
 	break;
@@ -1035,14 +1051,22 @@ void Logger::EmitObjectEvent(InternalEvent event, HeapObject* obj, ...)
 void Logger::EmitFunctionEvent(InternalEvent event, JSFunction* func,
 			       Code* new_code, SharedFunctionInfo* shared, ...) {
   if (!log_->IsEnabled()) return;
-  if ( !isolate_->bootstrapper()->isInitialized() ) return;
+  //if (!isolate_->bootstrapper()->isInitialized()) return;
 
   jsw_log("%d %x", event, func);
-
   va_list arg_ptr;
-
-  // Followed are handlers for different event types
+  
   switch(event) {
+  case CreateFunction:
+    {
+      // We do not care the context for function creation right now
+      const char* func_name = get_closure_mark(shared);
+      if ( func_name == NULL ) func_name = "unk_func";
+      jsw_log(" %x %x %x %s", 
+	      shared, func->map(), new_code, func_name);
+    }
+    break;
+
   case GenFullCode:
     {
       jsw_log(" %x", new_code);
@@ -1061,13 +1085,13 @@ void Logger::EmitFunctionEvent(InternalEvent event, JSFunction* func,
 	      kMaxOptCount ); 
     }
     break;
-    
+    /*    
   case SetCode:
 	{
 	  jsw_log(" %x", new_code);
 	}
 	break;
-
+    */
   case DisableOpt:
   case ReenableOpt:
 	{
@@ -1107,7 +1131,7 @@ void Logger::EmitFunctionEvent(InternalEvent event, JSFunction* func,
 	  va_end(arg_ptr);
 	  
 	  // Perhaps sometimes we miss code generation
-	  // We also output the old code to indicate this case, :<
+	  // Therefore, we output the old code to indicate this case, :<
 	  jsw_log(" %x %x %x %d %s", 
 		  old_code, new_code, 
 		  deopt_obj, ckmap_site,
@@ -1150,18 +1174,20 @@ void Logger::EmitFunctionEvent(InternalEvent event, JSFunction* func,
 void Logger::EmitMapEvent(InternalEvent event, ...)
 {
   if (!log_->IsEnabled()) return;
-  if ( !isolate_->bootstrapper()->isInitialized() ) return;
+  //if (!isolate_->bootstrapper()->isInitialized()) return;
 
   jsw_log("%d", event);
-
   va_list arg_ptr;
+
   switch(event) {
   case BeginDeoptOnMap:
     {
       va_start(arg_ptr, event);
-        Map* trigger_map = va_arg(arg_ptr, Map*);
-	va_end(arg_ptr);
-      jsw_log(" %x", trigger_map); 
+      HeapObject* obj = va_arg(arg_ptr, HeapObject*);
+      Map* trigger_map = va_arg(arg_ptr, Map*);
+      va_end(arg_ptr);
+
+      jsw_log(" %x %x", obj, trigger_map); 
     }
     break;
     
@@ -1171,7 +1197,8 @@ void Logger::EmitMapEvent(InternalEvent event, ...)
       
       int ckmap_site = va_arg(arg_ptr, int);
       int map_count = va_arg(arg_ptr, int);
-      jsw_log(" %d %d", ckmap_site, map_count);
+      jsw_log(" %d %d", ckmap_site, 
+	      map_count < 0 ? -map_count : map_count );
       
       if ( map_count < 0 ) {
 	// Followed is the single map
@@ -1181,7 +1208,8 @@ void Logger::EmitMapEvent(InternalEvent event, ...)
       else {
 	SmallMapList* map_list = va_arg(arg_ptr, SmallMapList*);
 	for ( int i = 0; i < map_count; ++i ) {
-	  jsw_log(" %x", map_list->at(i));
+	  Handle<Map> map = map_list->at(i);
+	  jsw_log(" %x", *map);
 	}
       }
       
@@ -1196,11 +1224,10 @@ void Logger::EmitMapEvent(InternalEvent event, ...)
   jsw_log('\n');
 }
 
-
 void Logger::EmitGCMoveEvent(HeapObject* from, HeapObject* to)
 {
   if (!log_->IsEnabled()) return;
-  if ( !isolate_->bootstrapper()->isInitialized() ) return;
+  if (!isolate_->bootstrapper()->isInitialized()) return;
 
   InternalEvent event = ForDebug;
 
@@ -1225,6 +1252,42 @@ void Logger::EmitGCMoveEvent(HeapObject* from, HeapObject* to)
   jsw_log("%d %x %x\n", event, from, to);
 }
 
+void Logger::EmitSignalEvent(InternalEvent event, HeapObject* obj, ...)
+{
+  if (!log_->IsEnabled()) return;
+  //if (!isolate_->bootstrapper()->isInitialized()) return;
+
+  // The basic information for all objects
+  jsw_log( "%d %x", event, obj);
+
+  //va_list arg_ptr;
+  
+  switch(event) {
+    // Followed four only handle transition to dictionary back and forth
+  case ElemToSlowMode:
+  case PropertyToSlowMode:
+  case ElemToFastMode:
+  case PropertyToFastMode:
+    // ElemTransition handles all other transitions such as smi->double
+  case ElemTransition:
+    // This is only a side-product of other operations
+    // {
+    //   va_start(arg_ptr, obj);
+    //   Map* old_map = va_arg(arg_ptr, Map*);
+    //   va_end(arg_ptr);
+      
+    //   // Introduce a new map
+    //   if ( old_map == NULL ) old_map = cur_map;
+    //   jsw_log(" %x %x", old_map, cur_map);
+    // }
+
+  default:
+    break;
+  }
+
+  jsw_log('\n');
+}
+
 
 // Sample useage
 //if ( FLAG_trace_internals ) {
@@ -1236,7 +1299,7 @@ void Logger::EmitGCMoveEvent(HeapObject* from, HeapObject* to)
 void Logger::EmitSysEvent(InternalEvent event, ...)
 {
   if (!log_->IsEnabled()) return;
-  if ( !isolate_->bootstrapper()->isInitialized() ) return;
+  //if ( !isolate_->bootstrapper()->isInitialized() ) return;
 
   //LogMessageBuilder msg(this);
   jsw_log("%d", event);
@@ -1244,17 +1307,14 @@ void Logger::EmitSysEvent(InternalEvent event, ...)
   va_list arg_ptr;
 
   switch( event ) {
-  case NotifyStackDeoptAll:
-	break;
-
   case ForDebug:
-	{
-	  va_start(arg_ptr, event);
-	  const char* s = va_arg(arg_ptr, const char*);
-	  va_end(arg_ptr);
-	  jsw_log(" %s", s);
-	}
-	break;
+    {
+      va_start(arg_ptr, event);
+      const char* s = va_arg(arg_ptr, const char*);
+      va_end(arg_ptr);
+      jsw_log(" %s", s);
+    }
+    break;
 
   default:
 	break;
@@ -2406,6 +2466,7 @@ bool Logger::SetUp(Isolate* isolate) {
   if ( FLAG_trace_internals ) {
     jsw_func_info = new map<SharedFunctionInfo*, char*>;
     jsw_msg = new char[jsw_buf_limit];
+    jsw_msg_del = new char[jsw_del_limit];
   }
   
   return true;
@@ -2456,6 +2517,7 @@ FILE* Logger::TearDown() {
     
     delete jsw_func_info;
     delete jsw_msg;
+    delete jsw_msg_del;
   }
 
   return log_->Close();

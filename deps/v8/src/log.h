@@ -360,25 +360,21 @@ class Logger {
     V(CreateNewObject,		create_new_object)			\
     V(CreateNewArray,		create_new_array)			\
     V(CreateContext,            create_context)				\
-    V(CreateFunction,           create_function)			\
     V(CopyObject,	       	copy_object)				\
     V(ChangePrototype,		change_prototype)			\
-    V(SetMap,			set_map)				\
     V(NewField,	                new_field)				\
+    V(UptField,	                upt_field)				\
     V(DelField,			del_field)				\
-    V(WriteFieldTransition,	write_field_transition)			\
-    V(ElemTransition,		elem_transition)			\
-    V(CowCopy,		        cow_copy)				\
-    V(ElemToSlowMode,       elem_to_slow)				\
-    V(PropertyToSlowMode,   prop_to_slow)				\
-    V(ElemToFastMode,       elem_to_fast)				\
-    V(PropertyToFastMode,   prop_to_fast)				  
-  
+    V(SetElem,                  set_elem)				\
+    V(DelElem,                  del_elem)				\
+    V(ExpandArray,          expand_array)				\
+    V(CowCopy,		        cow_copy)				
+    
 #define FUNCTION_EVENTS_LIST(V)						\
-  V(GenFullCode,	    gen_full_code)				\
+  V(CreateFunction,           create_function)				\
+    V(GenFullCode,	    gen_full_code)				\
     V(GenOptCode,           gen_opt_code)				\
     V(GenOsrCode,           gen_osr_code)				\
-    V(SetCode,		    set_code)					\
     V(DisableOpt,	    disable_opt)				\
     V(ReenableOpt,          reenable_opt)				\
     V(OptFailed,	    gen_opt_failed)				\
@@ -389,13 +385,19 @@ class Logger {
 #define MAP_EVENTS_LIST(V)						\
   V(BeginDeoptOnMap,	    begin_deopt_on_map)				\
     V(GenDeoptMaps,         gen_opt_ic_maps)	
-  
+
+#define SIGNAL_EVENTS_LIST(V)						\
+  V(ElemToSlowMode,       elem_to_slow)					\
+    V(PropertyToSlowMode,   prop_to_slow)				\
+    V(ElemToFastMode,       elem_to_fast)				\
+    V(PropertyToFastMode,   prop_to_fast)				\
+    V(ElemTransition,	    elem_transition)
+
 #define SYS_EVENTS_LIST(V)						\
   V(GCMoveObject,			gc_move_object)			\
     V(GCMoveCode,			gc_move_code)			\
     V(GCMoveShared,			gc_move_shared)			\
     V(GCMoveMap,			gc_move_map)			\
-    V(NotifyStackDeoptAll,	notify_stack_deopt_all)			\
     V(ForDebug,				for_debug)
   
   enum InternalEvent {
@@ -404,21 +406,22 @@ class Logger {
   OBJECT_EVENTS_LIST(GetEventName)
   FUNCTION_EVENTS_LIST(GetEventName)
   MAP_EVENTS_LIST(GetEventName)
+  SIGNAL_EVENTS_LIST(GetEventName)
   SYS_EVENTS_LIST(GetEventName)
   events_count
 
 #undef GetEventname
   };
 
+  // Trace object actions
+  // obj could ba an JSObject, JSArray, Context, and etc.
+  void EmitObjectEvent(InternalEvent event, HeapObject* obj, ...);
+
   // Trace function actions
   // Note, we pass func, code, shared separately because 
   // sometimes, code != func->code(), func == NULL (hence func->shared() is invalid)
   void EmitFunctionEvent(InternalEvent event, JSFunction* func,
-	Code* new_code, SharedFunctionInfo* shared, ...);
-
-  // Trace object actions
-  // obj could ba an JSObject, JSArray, Context, and etc.
-  void EmitObjectEvent(InternalEvent event, HeapObject* obj, ...);
+			 Code* new_code, SharedFunctionInfo* shared, ...);
   
   // Trace anything related to maps
   void EmitMapEvent(InternalEvent event, ...);
@@ -426,6 +429,9 @@ class Logger {
   // We separate gc moving events for efficiency consideration
   void EmitGCMoveEvent(HeapObject* from, HeapObject* to);
   
+  // Emit a signal event that is associated to the next concrete event
+  void EmitSignalEvent(InternalEvent event, HeapObject* obj, ...);
+
   // For all other system events
   void EmitSysEvent(InternalEvent event, ...);
   
@@ -620,25 +626,30 @@ class Logger {
 
   int64_t epoch_;
 
+  friend class CpuProfiler;
+
   // JSweeter logging facilities
   static const int jsw_buf_limit = 134217728;            // 128MB
-  char* jsw_msg;
-  int jsw_pos;
-  map<SharedFunctionInfo*, char*>* jsw_func_info;
-  int ic_counters;
-
-  // We build a readable function name
-  const char* get_closure_mark(SharedFunctionInfo*);
-  
-  // Get the enclosing closure for this event
-  JSFunction* get_events_context();
+  static const int jsw_del_limit = 1024*1024;            // 1MB
+  static const int max_event_length = 2048;              // 2KB
+  static const int max_contexts_depth = 32;
+  char *jsw_msg, *jsw_msg_del;     // standard message buffer and delayed buffer
+  int jsw_pos, jsw_del_pos;        // writing positions for standard and delayed buffer
+  int ic_counters;                 // global counter for deoptmization sites
 
   // Flush the jsweeter message buffer buffer if possible
   void jsw_log(const char* format, ...);
   void jsw_log(char c);
-  void jsw_output(bool force = false);
+  void jsw_output(bool force = false); 
+  void jsw_log_delay(const char* format, ...);
+  void jsw_merge_delay();
 
-  friend class CpuProfiler;
+  // We build a readable function descriptor
+  const char* get_closure_mark(SharedFunctionInfo*);
+  map<SharedFunctionInfo*, char*>* jsw_func_info;       // cache of function descriptors
+
+  // Get the enclosing closure(s) for this event
+  int get_contexts(JSFunction**);
 };
 
 

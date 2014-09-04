@@ -923,22 +923,27 @@ void LCodeGen::TraceDeoptObject(int ckmap_site, Register deopt_obj)
   Register fail_info = regs[0];
   Register tmp = regs[1];
 
+  __ RecordComment("Record the deoptimization trigger");
+
   // Save registers
   __ push(fail_info);
   __ push(tmp);
   
   // Load the pointer to the failure recorder
   Isolate::jswDeoptPack* pack = info()->isolate()->get_jsw_deopt_pack();
-  __ mov(fail_info, Immediate(ExternalReference(pack)));
+  //PrintF( "LGen deopt pack = %p\n", pack );
   
   // Record the deoptimized function
+  __ mov(fail_info, Immediate(ExternalReference(&(pack->function))));
   __ mov(tmp, Operand(ebp, JavaScriptFrameConstants::kFunctionOffset));
   __ mov(Operand(fail_info, 0), tmp);
   
   // Record the object that triggers deoptimization
+  //__ mov(fail_info, Immediate(ExternalReference(&(pack->object))));
   __ mov(Operand(fail_info, kPointerSize), deopt_obj);
   
   // Record the map check failure site
+  //__ mov(fail_info, Immediate(ExternalReference(&(pack->ckmap_site))));
   __ mov(Operand(fail_info, kPointerSize*2), Immediate(ckmap_site));
   
   // Restore registers
@@ -955,7 +960,7 @@ void LCodeGen::DeoptimizeIf(Condition cc,
     ? Deoptimizer::LAZY
       : Deoptimizer::EAGER;
 
-  bool do_log = (!is_stub && FLAG_trace_internals && deopt_obj.is_valid());
+  bool do_log = (!is_stub && deopt_obj.is_valid() && FLAG_trace_internals);
   Label no_log;
 
   if ( do_log ) {

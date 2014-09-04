@@ -1420,13 +1420,14 @@ Handle<JSFunction> Factory::CreateApiFunction(
   }
   ASSERT(type != INVALID_TYPE);
 
+  const char *name = (instance_type == InnerGlobalObject? "global" : "normAPI");
   Handle<JSFunction> result =
-      NewFunction(Factory::empty_string(),
-                  type,
-                  instance_size,
-                  code,
-                  true);
-
+    NewFunction( InternalizeUtf8String(name),  //Factory::empty_string(),
+		 type,
+		 instance_size,
+		 code,
+		 true);
+  
   // Set length.
   result->shared()->set_length(obj->length());
 
