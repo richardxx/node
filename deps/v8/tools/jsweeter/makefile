@@ -1,5 +1,5 @@
 CC=g++
-CFLAGS= -w -g
+CFLAGS= -w -O2
 .PHONY: all install clean
 .DEFAULT: all
 

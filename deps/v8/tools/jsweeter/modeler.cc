@@ -156,12 +156,12 @@ create_boilerplate_common(FILE* file, const char* msg)
   }
 
   // The automaton for this boilerplace just created
-  if ( !sm->has_name() && context != NULL ) {
+  if ( !sm->has_name() ) {
     char buf[ON_STACK_NAME_SIZE];
     sprintf( buf, "/%s#%d/", context->m_name.c_str(), index ); 
     sm->set_name(buf);
   }
-
+  
   // Update transitions
   ObjectMachine* osm = (ObjectMachine*)sm;
   osm->evolve(i_desc, contexts, -1, map_id, NULL, msg, 0, true);
@@ -209,14 +209,18 @@ create_obj_common(FILE* file, InternalEvent event)
   fscanf( file, "%x %x", &map_id, &alloc_sig );
   
   // We first obtain the constructor name
-  StateMachine* ctor = find_function(alloc_sig);
-  const char* ctor_name = (ctor ? ctor->toString().c_str() : "unk_func");
+  StateMachine* ctor = NULL;
+  const char* ctor_name = NULL;
 
   if ( event <= CreateArrayLiteral ) {
     fscanf( file, " %d", &literal_index );
-    sprintf( name_buf, "%s##%d", ctor_name, literal_index );
+    ctor = find_signature(alloc_sig, StateMachine::MBoilerplate);
+    ctor_name = ctor->toString().c_str();
+    sprintf( name_buf, "%s", ctor_name );
   }
   else {
+    ctor = find_function(alloc_sig);
+    ctor_name = ctor->toString().c_str();
     sprintf( name_buf, "New %s", ctor_name);
   }
 
@@ -431,15 +435,14 @@ OpTransitionCommon( vector<StateMachine*> &contexts, int o_addr, int old_map_id,
       }
       
       if (n_flds >= 15 ) {
-	printf( "<%s, %x>, properties -> dictionary\n", sm->toString().c_str(), i_desc->raw_addr );
+	printf( "properties -> dictionary\n" );
 	print_path(path, "Last 15:", size > 15 ? size - 15 : 0);
 	printf( "\n" );
+	i_desc->prop_dict = false;
       }
       else {
 	i_desc->is_watched = true;
       }
-
-      i_desc->prop_dict = false;
     }
   }
   else if ( i_desc->elem_dict ) {
@@ -449,7 +452,7 @@ OpTransitionCommon( vector<StateMachine*> &contexts, int o_addr, int old_map_id,
     sm->forward_search_path(start, cur_s, &path);
     
     int size = path.size();
-    printf( "<%s, %x>, elements -> dictionary\n", sm->toString().c_str(), i_desc->raw_addr );
+    printf( "elements -> dictionary\n" );
     print_path(path, "Last 15:", size > 15 ? size - 15 : 0);
     printf( "\n" );
     i_desc->elem_dict = false;
@@ -1102,7 +1105,7 @@ gc_move_code(FILE* file)
 StateMachine* 
 find_signature(int m_sig, StateMachine::Mtype type, bool create)
 {
-  StateMachine* sm = NULL;
+  StateMachine* sm = miss_context;
   map<int, StateMachine*> &t_mac = machines[type];
   map<int, StateMachine*>::iterator i_sm = t_mac.find(m_sig);
   
@@ -1185,7 +1188,7 @@ prepare_machines()
   // Build a missing context
   InstanceDescriptor* i_miss = find_instance( INT_MAX, StateMachine::MFunction, true );
   miss_context = i_miss->sm;
-  miss_context->set_name("miss");
+  miss_context->set_name("*MISS*");
 }
 
 

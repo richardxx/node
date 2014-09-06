@@ -33,51 +33,6 @@ Map::add_dep(FunctionMachine* fsm)
 }
 
 
-void 
-Map::deopt_deps(TransPacket* tp)
-{
-  if ( dep_funcs.size() == 0 ) return;
-  
-  printf( "Forced to deoptimize:\n" );
-
-  if ( tp != NULL ) {
-    stringstream action;
-    tp->describe(action);
-
-    Transition *trans = tp->trans;
-    StateMachine* trigger_obj = trans->source->machine;
-    string obj_name = trigger_obj->toString();
-    
-    printf( "\tObj=<%s>, Action=%s\n",
-	    obj_name.c_str(),
-	    action.str().c_str() );
-  }
-  else {
-    printf( "\t(?)\n" );
-  }
-
-  printf( "\t===========>\n" );
-  
-  // Iterate the deoptimized functions
-  int size = dep_funcs.size();
-  FunctionMachine* last = dep_funcs[0];
- 
-  for ( int i = 1, j = 0; i <= size; ++i ) {
-    FunctionMachine* fm = NULL;
-    if ( i == size ||
-	 (fm=dep_funcs[i]) != last ) {
-      string last_name = last->toString();
-      printf( "\t %s (X %d)\n", last_name.c_str(), i - j);
-      last = fm;
-      j = i;
-    }
-  }
-  
-  printf( "\n" );
-  
-  dep_funcs.clear();
-}
-
 Code::Code(int new_code)
 {
   code_id = new_code;

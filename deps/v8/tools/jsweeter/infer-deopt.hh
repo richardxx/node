@@ -7,17 +7,6 @@
 #include <deque>
 #include "type-info.hh"
 
-enum FixType {
-  addF,
-  fOrder,
-  fPromote,
-  ckStore,
-  ckIntOF,
-  factorOut,
-
-  FixCount
-};
-
 struct DeoptPack
 {
   int failed_obj;
@@ -42,8 +31,10 @@ struct DeoptPack
   }
 };
 
+ObjectMachine* 
+check_deopt(struct DeoptPack&);
 
-ObjectMachine* check_deopt(struct DeoptPack&);
-
+void
+summarize_deopt();
 
 #endif

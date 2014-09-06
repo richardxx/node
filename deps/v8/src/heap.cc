@@ -4932,8 +4932,10 @@ MaybeObject* Heap::CopyJSObject(JSObject* source) {
     JSObject::cast(clone)->set_properties(FixedArray::cast(prop), wb_mode);
   }
 
+  /*
   LOG_INTERNAL_EVENT(isolate_, 
 	EmitObjectEvent(Logger::CopyObject, JSObject::cast(clone), source));
+  */
 
   // Return the new clone.
   return clone;
@@ -5043,8 +5045,10 @@ MaybeObject* Heap::CopyJSObjectWithAllocationSite(JSObject* source) {
     JSObject::cast(clone)->set_properties(FixedArray::cast(prop), wb_mode);
   }
 
+  /*
   LOG_INTERNAL_EVENT(isolate_, 
 	EmitObjectEvent(Logger::CopyObject, JSObject::cast(clone), source));
+  */
 
   // Return the new clone.
   return clone;

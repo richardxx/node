@@ -451,6 +451,10 @@ class FunctionMachine : public ObjectMachine
 
 
 // Public functions
+void
+print_transition_raw(string& reason, Transition*, bool, bool prt_trans, 
+		     bool, const char* line_header="\t", const char dir='|');
+
 void 
 print_transition(Transition* trans, bool prt_src = true, bool prt_trans = true, 
 		 bool prt_tgt = true, const char* line_header="\t", const char dir='|');

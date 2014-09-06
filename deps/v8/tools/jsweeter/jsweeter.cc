@@ -9,8 +9,10 @@
 #include <cstdlib>
 #include <string>
 #include <unistd.h>
+#include <signal.h>
 #include "options.h"
 #include "modeler.hh"
+#include "infer-deopt.hh"
 
 const char* input_file = NULL;
 const char* visual_file = NULL;
@@ -86,11 +88,20 @@ parse_options(int argc, char** argv)
   return 1;
 }
 
+static void sigint_handler(int signal_t)
+{
+  fprintf( stderr, "Segmentation Fault Captured.\n" );
+  fflush(stdout);
+  exit(-1);
+}
+
 
 int main(int argc, char** argv)
 {
   if ( parse_options(argc, argv) == 0 )
     return -1;
+
+  signal(SIGSEGV, sigint_handler);
 
   if ( !build_automata(input_file) ) {
     printf( "Error in building automata, stop.\n" );
@@ -101,6 +112,7 @@ int main(int argc, char** argv)
     visualize_machines(visual_file);
   
   clean_machines();
+  summarize_deopt();
 
   return 0;
 }

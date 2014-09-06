@@ -564,7 +564,7 @@ RUNTIME_FUNCTION(MaybeObject*, Runtime_CreateArrayLiteral) {
     Object *obj;
     if ( result->ToObject(&obj) ) {
       LOG(isolate, 
-	  EmitObjectEvent(Logger::CreateObjectLiteral, JSObject::cast(obj), 
+	  EmitObjectEvent(Logger::CreateArrayLiteral, JSArray::cast(obj), 
 			  boilerplate_object, literals_index));
     }
   }
@@ -615,7 +615,7 @@ RUNTIME_FUNCTION(MaybeObject*, Runtime_CreateArrayLiteralShallow) {
     Object *obj;
     if ( result->To(&obj) ) {
       LOG(isolate, 
-	  EmitObjectEvent(Logger::CreateObjectLiteral, JSObject::cast(obj), 
+	  EmitObjectEvent(Logger::CreateArrayLiteral, JSObject::cast(obj), 
 			  boilerplate_object, literals_index));
     }
   }

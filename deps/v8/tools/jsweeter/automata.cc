@@ -220,11 +220,13 @@ Transition::merge_reasons(string& final, bool extra_newline)
 
   for ( ; it != end; ++it ) {
     if ( i >= 30 ) break;
+    TransPacket* tp = *it;
+    
     if ( prt_plus ) {
       ss << " + ";
       if ( extra_newline ) ss << "\\n";
     }
-    TransPacket* tp = *it;
+
     if ( tp->describe(ss, false) ) {
       cost += tp->cost;
       prt_plus = true;
@@ -1008,13 +1010,12 @@ FunctionMachine::evolve(InstanceDescriptor* i_desc, int map_id,
   return tp;
 }
 
-
-void 
-print_transition(Transition* trans, bool prt_src, bool prt_trans, bool prt_tgt, const char* line_header, const char dir)
+void
+print_transition_raw(string& reason, Transition* trans, bool prt_src, bool prt_trans, bool prt_tgt, const char* line_header, const char dir)
 {
   State* src = trans->source;
   State* tgt = trans->target;
-  
+
   if ( prt_src == true ) {
     // The symbol for the leading transition
     const char* pstr = NULL;
@@ -1030,8 +1031,6 @@ print_transition(Transition* trans, bool prt_src, bool prt_trans, bool prt_tgt, 
   }
   
   if ( prt_trans ) {
-    string reason;
-    trans->merge_reasons(reason, false);
     if ( dir == '|' ) {
       if ( prt_src || prt_tgt ) printf( "%s|\n", line_header );
       printf( "%s%s\n", line_header, reason.c_str());
@@ -1049,6 +1048,22 @@ print_transition(Transition* trans, bool prt_src, bool prt_trans, bool prt_tgt, 
     printf( "<%s>" , tgt->toString().c_str() );
     if ( dir == '|' ) printf( "\n" );
   }
+}
+
+void 
+print_transition(Transition* trans, bool prt_src, bool prt_trans, bool prt_tgt, const char* line_header, const char dir)
+{
+  string reason = "";
+
+  if ( prt_trans )
+    trans->merge_reasons(reason, false);
+
+  print_transition_raw(reason, 
+		       trans,
+		       prt_src,
+		       prt_trans, 
+		       prt_tgt, 
+		       line_header, dir);
 }
 
 static int

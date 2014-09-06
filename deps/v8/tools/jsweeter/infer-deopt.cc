@@ -1,6 +1,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <set>
 #include <map>
 #include <utility>
 #include <cassert>
@@ -16,21 +17,70 @@ struct PathPack
   int dist;
   deque<Transition*> path1;
   deque<Transition*> path2;
+
+  PathPack() { }
+
+  PathPack(const PathPack& other)
+  {
+    dist = other.dist;
+    path1 = other.path1;
+    if ( dist == 0 ) path2 = other.path2;
+  }
 };
+
+
+struct PPCmp
+{
+  bool operator()(const PathPack* lhs, const PathPack* rhs)
+  {
+    if ( lhs->dist != rhs->dist ) 
+      return lhs->dist < rhs->dist;
+
+    int size11 = lhs->path1.size();
+    int size21 = rhs->path1.size();
+    if ( size11 != size21 ) return size11 < size21;
+
+    for ( int i = 0; i < size11; ++i ) {
+      Transition* t1 = lhs->path1[i];
+      Transition* t2 = rhs->path1[i];
+      if ( t1 != t2 ) return t1 < t2;
+    }
+
+    if ( lhs->dist == 0 ) {
+      int size12 = lhs->path2.size();
+      int size22 = rhs->path2.size();
+      if ( size12 != size22 ) return size12 < size22;
+      
+      for ( int i = 0; i < size12; ++i ) {
+	Transition* t1 = lhs->path2[i];
+	Transition* t2 = rhs->path2[i];
+	if ( t1 != t2 ) return t1 < t2;
+      }
+    }
+    
+    return false;
+  }
+};
+
+static int n_rep_cases = 0;
+static set<PathPack*, PPCmp> deopt_causes;
 
 
 static void
 compute_distance(ObjectMachine* osm, State* inst_s, State* exp_s, PathPack* pp)
 {
   // inst_s -> exp_s
-  int d = osm->forward_search_path(inst_s, exp_s, &(pp->path1));
+  deque<Transition*> &exp_inst_path = pp->path1;
+  exp_inst_path.clear();
+  int d = osm->forward_search_path(inst_s, exp_s, &exp_inst_path);
   if ( d > 0 ) {
     pp->dist = d;
     return;
   }
   
   // exp_s -> inst_s
-  d = osm->forward_search_path(exp_s, inst_s, &(pp->path1));
+  exp_inst_path.clear();
+  d = osm->forward_search_path(exp_s, inst_s, &exp_inst_path);
   if ( d > 0 ) {
     pp->dist = -d;
     return;
@@ -41,17 +91,18 @@ compute_distance(ObjectMachine* osm, State* inst_s, State* exp_s, PathPack* pp)
   deque<Transition*> &inst_path = pp->path2;
   
   // Obtain the path root -> exp_s
+  exp_path.clear();
   osm->forward_search_path(osm->start, exp_s, &exp_path);
   int i = exp_path.size() - 1;
   
+  // Find the LCA
   for ( ; i > -1; --i ) {
     Transition* trans = exp_path[i];
     State* lca_s = trans->source;
+    inst_path.clear();
     if ( osm->forward_search_path(lca_s, inst_s, &inst_path) > 0 ) {
-      // Found
       break;
     }
-    inst_path.clear();
   }
   
   while ( i > 0 ) {
@@ -63,7 +114,35 @@ compute_distance(ObjectMachine* osm, State* inst_s, State* exp_s, PathPack* pp)
 }
 
 static void
-process_hetero_type(int id, Map* exp_map, Map* inst_map)
+print_instance_path(InstanceDescriptor* i_obj, deque<Transition*>& path, const char* title, int skip_n)
+{
+  // We output the born transition for this instance first
+  TransPacket* birth_context = i_obj->birth_place;
+  Transition *trans = birth_context->trans;
+  stringstream ss;
+  birth_context->describe(ss);
+  string reason = ss.str();
+
+  printf( "%s\n", title );
+  print_transition_raw( reason, trans, true, true, false, "\t" );
+  
+  if ( trans == path[0] ) {
+    path.pop_front();
+    if ( skip_n != 0 ) skip_n--;
+  }
+  
+  if ( path.size() == 0 ) {
+    print_transition_raw( reason, trans, false, false, true, "\t" );
+  }
+  else {
+    print_path(path, "\t", skip_n);
+  }
+
+  printf( "\n" );
+}
+
+static void
+process_hetero_type(int id, Map* exp_map, Map* inst_map, InstanceDescriptor* i_obj)
 {
   printf( "%d. Heterogeneous case: exp_map = %x, inst_map = %x.\n", 
 	  id, exp_map->id(), inst_map->id() );
@@ -79,28 +158,27 @@ process_hetero_type(int id, Map* exp_map, Map* inst_map)
   State* inst_s = inst_map->to_state();
   StateMachine* sm_inst = inst_s->get_machine();
 
-  const char *title = "";
-
   if ( sm_exp == sm_inst ) {
     // A case that using different closure instances as the constructors
-    printf( "uniCtors" );
+    printf( "~~uniCtors~~" );
   }
-
+  
   deque<Transition*> path;
   int skip_n = 0;
-
-  sm_inst->forward_search_path( sm_inst->start, inst_s, &path );
-  if ( path.size() > 5 ) skip_n = path.size() - 5; 
-  print_path( path, "inst_map:", skip_n );
-  printf("\n");
-
+  
   if ( exp_map->has_bound() ) {
-    path.clear();
     sm_exp->forward_search_path( sm_exp->start, exp_s, &path );
     if ( path.size() > 5 ) skip_n = path.size() - 5; 
     print_path( path, "exp_map:", skip_n );
     printf( "\n" );
-  } 
+  }
+
+  path.clear();
+  skip_n = 0;
+  sm_inst->forward_search_path( sm_inst->start, inst_s, &path );
+  if ( path.size() > 5 ) skip_n = path.size() - 5;
+  print_instance_path( i_obj, path, "inst_map:", skip_n );
+  printf("\n");
 }
 
 static
@@ -191,7 +269,7 @@ print_pair_transitions( pair<Transition*, Transition*> &pr )
 }
 
 static
-void handle_split_type( deque<Transition*>& path1, deque<Transition*>& path2 )
+void handle_split_type( deque<Transition*>& path1, deque<Transition*>& path2, InstanceDescriptor* i_obj)
 {
   map<string, int> cls_val, fld_pos;
   map<string, int>::iterator it;
@@ -238,9 +316,8 @@ void handle_split_type( deque<Transition*>& path1, deque<Transition*>& path2 )
 	it = cls_val.find(f_name);
 	if ( it != cls_val.end() && it->second != value ) {
 	  // And, both evolution paths assign closures to the same field
-	  Transition *prev = path1[it->second];
 	  cls_val.erase(it);
-	  advF.push_back( make_pair(prev, trans) );
+	  advF.push_back( make_pair((Transition*)NULL, trans) );
 	  assigned_cls = true;
 	}
       }
@@ -291,8 +368,7 @@ void handle_split_type( deque<Transition*>& path1, deque<Transition*>& path2 )
     }
     
     if ( path2.size() < 5 ) {
-      print_path( path2, "lca -> inst" );
-      printf( "\n" );
+      print_instance_path( i_obj, path2, "lca -> inst", 0 );
     }
   }
 }
@@ -332,13 +408,26 @@ void report_suggests(int id, InstanceDescriptor* i_obj, vector<PathPack*>& paths
        * \exists s3, R(s3, inst_s) && R(s3, exp_s)
        * s3 is a split point.
        */
-      printf( "R(lca, exp) = %d, R(lca, inst) = %d\n",
-	      pp->path1.size(), pp->path2.size() );
-      handle_split_type( pp->path1, pp->path2 );
+      int size1 = pp->path1.size();
+      int size2 = pp->path2.size();
+      printf( "R(lca, exp) = %d, R(lca, inst) = %d\n", size1, size2 );
+      handle_split_type( pp->path1, pp->path2, i_obj );
     }
   }
+
+  n_rep_cases += paths.size();
 }
 
+static bool
+valid_result(PathPack* pp)
+{
+  if ( pp->dist == 0 ) {
+    int size1 = pp->path1.size();
+    int size2 = pp->path2.size();
+    if ( size1 == 0 && size2 == 0 ) return false;
+  }
+  return true;
+}
 
 ObjectMachine*
 check_deopt(DeoptPack& deopt_pack)
@@ -359,39 +448,124 @@ check_deopt(DeoptPack& deopt_pack)
   // Report title
   stringstream ss;
   i_obj->birth_place->describe(ss);
-  printf( "Deopt: func=%s, bailout=%d, obj=<%s, %s>:\n", 
+  printf( "Deopt: func=%s, bailout=%d, obj=%s(O%d):\n", 
 	  deopt_pack.deopt_f->toString().c_str(), deopt_pack.bailout_id,
 	  ss.str().c_str(),
-	  osm->toString().c_str() );
+	  osm->id );
   
   State* inst_s = i_obj->location(); 
+  PathPack tmp_pack;
 
-  for ( int i = 0; i < size; ++i ) {
+  for ( int i = 0, j = 0; i < size; ++i ) {
     Map* exp_map = map_list->at(i);
-    State* exp_s = osm->search_state(exp_map, false);
+    if ( !exp_map->has_bound() ) {
+      printf( "%d. Sorry, never saw this map = %x.\n\n", 
+	      ++j, exp_map->id() );
+      continue;
+    }
 
-    if ( exp_s == NULL ) {
+    State* exp_s = exp_map->to_state();
+
+    if ( exp_s->machine != osm ) {
       // exp_map is heterogeneous to the inst_map
-      process_hetero_type(i+1, exp_map, inst_s->get_map());
+      process_hetero_type(++j, exp_map, inst_s->get_map(), i_obj);
       continue;
     }
  
-    PathPack *pp = new PathPack;
+    PathPack *pp = &tmp_pack;
     compute_distance(osm, inst_s, exp_s, pp);
+    if ( !valid_result(pp) ) continue;
+    
+    set<PathPack*>::iterator it = deopt_causes.find(pp);
+    if ( it == deopt_causes.end() ) {
+      pp = new PathPack(tmp_pack);
+      deopt_causes.insert(pp);
+    }
+    else {
+      pp = *it;
+    }
+
     paths.push_back(pp);
     ++n_homo;
   }
 
   // Decide if this type is redundant
   //if ( n_homo >= 0.3*size ) {
-  report_suggests(size - n_homo + 1, i_obj, paths);
+    report_suggests(size - n_homo + 1, i_obj, paths);
     //}
-
-  // Avoid memory leak
-  for ( int i = 0; i < paths.size(); ++i ) {
-    PathPack *pp = paths[i];
-    delete pp;
-  }
   
   return osm;
+}
+
+void
+summarize_deopt()
+{
+  printf( "\nWe generate %d reports with %d different causes.\n\n",
+	  n_rep_cases,
+	  deopt_causes.size() );
+
+  set<PathPack*>::iterator it = deopt_causes.begin();
+  set<PathPack*>::iterator end = deopt_causes.end();
+  while ( it != end ) {
+    PathPack *pp = *it;
+    delete pp;
+    ++it;
+  }
+}
+
+void 
+Map::deopt_deps(TransPacket* tp)
+{
+  if ( dep_funcs.size() == 0 ) return;
+  
+  printf( "Forced to deoptimize:\n" );
+
+  if ( tp != NULL ) {
+    stringstream action;
+    tp->describe(action);
+
+    Transition *trans = tp->trans;
+    StateMachine* trigger_obj = trans->source->machine;
+    string obj_name = trigger_obj->toString();
+    
+    printf( "\tObj=<%s>, Action=%s\n",
+	    obj_name.c_str(),
+	    action.str().c_str() );
+
+    // Add to the summary
+    PathPack* pp = new PathPack;
+    pp->dist = 1;
+    pp->path1.push_back(tp->trans);
+    if ( deopt_causes.find(pp) != deopt_causes.end() ) {
+      delete pp;
+    }
+    else {
+      deopt_causes.insert(pp);
+    }
+  }
+  else {
+    printf( "\t(?)\n" );
+  }
+
+  printf( "\t===========>\n" );
+  
+  // Iterate the deoptimized functions
+  int size = dep_funcs.size();
+  FunctionMachine* last = dep_funcs[0];
+ 
+  for ( int i = 1, j = 0; i <= size; ++i ) {
+    FunctionMachine* fm = NULL;
+    if ( i == size ||
+	 (fm=dep_funcs[i]) != last ) {
+      string last_name = last->toString();
+      printf( "\t %s (X %d)\n", last_name.c_str(), i - j);
+      last = fm;
+      j = i;
+    }
+  }
+  
+  printf( "\n" );
+  dep_funcs.clear();
+    
+  n_rep_cases++;
 }

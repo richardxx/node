@@ -4315,11 +4315,9 @@ void LCodeGen::DoCallNewArray(LCallNewArray* instr) {
     ArrayNArgumentsConstructorStub stub(kind, context_mode, override_mode);
     CallCode(stub.GetCode(isolate()), RelocInfo::CONSTRUCT_CALL, instr);
   }
-
+  
   if ( FLAG_trace_internals ) {
-    // Guess the pointer to the array is in eax, might be wrong
-    __ push(eax);
-    // Call runtime to generate log message
+    __ push(ToRegister(instr->result()));
     __ CallRuntime(Runtime::kLogNewArray, 1);
   }
 }
